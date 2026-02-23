@@ -76,42 +76,56 @@ uv run --group dev pytest tests/test_warmup_scheduler.py::TestSchedulerLRBehavio
 ## Pipeline de Funcionamento
 
 ```mermaid
-flowchart LR
-    %% Entidades externas (I/O)
-    IN[/"&nbsp;<br/>🗂️ Par de Casos<br/>Jurídicos<br/>&nbsp;"/]:::io
-    OUT[/"&nbsp;<br/>📋 Ranking de<br/>Relevância<br/>&nbsp;"/]:::io
+flowchart TB
+ subgraph Fase1["⚙️ 1. Pré-processamento"]
+    direction LR
+        P1["✂️ Segmentação em Parágrafos"]
+  end
+ subgraph Fase2["🧠 2. Extração de Features"]
+    direction LR
+        DB1[("💾 Pesos BERT Pré-treinados")]
+        P2["🤖 Codificação BERT"]
+        DB2[("📦 Cache de Embeddings")]
+  end
+ subgraph Fase3["🔀 3. Modelagem"]
+    direction LR
+        P3["🔀 Modelagem de Interações"]
+        P4["🧠 Agregação GRU/LSTM + Atenção"]
+  end
+ subgraph Fase4["📊 4. Decisão e Métricas"]
+    direction LR
+        P5["🎯 P5 Scoring de Entailment"]
+        P6["📈 P6 Avaliação Rec·Prec·F1"]
+  end
+    DB1 -. Carregamento .-> P2
+    P2 -- Tensores [CLS] --> DB2
+    P3 -- Matriz de interações --> P4
+    P5 -- Scores (Logits) --> P6
+    IN[/"🗂️ Par de Docs Jurídicos"/] -- Casos brutos --> P1
+    P1 -- "Seq. de parágrafos (Tokens)" --> P2
+    DB2 -- Representações vetoriais --> P3
+    P4 -- Vetor de contexto --> P5
+    P6 -- Métricas finais --> OUT[/"📋 Ranking de Relevância"/]
 
-    %% Armazenamentos
-    DB1[("&nbsp;<br/>💾 BERT<br/>Pré-treinado<br/>&nbsp;")]:::store
-    DB2[("&nbsp;<br/>📦 Embeddings<br/>& Checkpoints<br/>&nbsp;")]:::store
-
-    %% Processos
-    P1["✂️ P1\nSegmentação em\nParágrafos"]:::preproc
-    P2["🤖 P2\nCodificação\nBERT"]:::encoding
-    P3["🔀 P3\nModelagem de\nInterações"]:::interaction
-    P4["🧠 P4\nAgregação\nGRU/LSTM + Atenção"]:::aggregation
-    P5["📊 P5\nScoring de\nEntailment"]:::scoring
-    P6["📈 P6\nAvaliação\nMAP · P@5 · F1"]:::evaluation
-
-    %% Fluxos de dados
-    IN           -->|"casos brutos"| P1
-    P1           -->|"sequências de parágrafos"| P2
-    DB1          -->|"pesos pré-treinados"| P2
-    P2           -->|"embeddings por parágrafo"| DB2
-    DB2          -->|"representações vetoriais"| P3
-    P3           -->|"matriz de interações"| P4
-    P4           -->|"vetor agregado"| P5
-    P5           -->|"scores de relevância"| P6
-    P6           --> OUT
-
-    classDef io          fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e,font-weight:bold
-    classDef store       fill:#f1f5f9,stroke:#475569,color:#1e293b,font-weight:bold
-    classDef preproc     fill:#ffedd5,stroke:#ea580c,color:#7c2d12,font-weight:bold
-    classDef encoding    fill:#fef9c3,stroke:#ca8a04,color:#713f12,font-weight:bold
-    classDef interaction fill:#ede9fe,stroke:#7c3aed,color:#2e1065,font-weight:bold
-    classDef aggregation fill:#fce7f3,stroke:#db2777,color:#831843,font-weight:bold
-    classDef scoring     fill:#ccfbf1,stroke:#0d9488,color:#134e4a,font-weight:bold
-    classDef evaluation  fill:#dcfce7,stroke:#16a34a,color:#14532d,font-weight:bold
+     P1:::preproc
+     DB1:::store
+     P2:::encoding
+     DB2:::store
+     P3:::interaction
+     P4:::aggregation
+     P5:::scoring
+     P6:::evaluation
+     IN:::io
+     OUT:::io
+    classDef io         fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e,font-weight:bold
+    classDef store      fill:#f1f5f9,stroke:#475569,stroke-width:2px,color:#1e293b,font-weight:bold
+    classDef preproc    fill:#ffedd5,stroke:#ea580c,stroke-width:2px,color:#7c2d12,font-weight:bold
+    classDef encoding   fill:#fef9c3,stroke:#ca8a04,stroke-width:2px,color:#713f12,font-weight:bold
+    classDef interaction fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#2e1065,font-weight:bold
+    classDef aggregation fill:#fce7f3,stroke:#db2777,stroke-width:2px,color:#831843,font-weight:bold
+    classDef scoring    fill:#ccfbf1,stroke:#0d9488,stroke-width:2px,color:#134e4a,font-weight:bold
+    classDef evaluation fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d,font-weight:bold
+    classDef cluster    fill:#ffffff,stroke:#cbd5e1,stroke-width:2px,stroke-dasharray: 5 5,rx:10,ry:10
 ```
 
 ---
