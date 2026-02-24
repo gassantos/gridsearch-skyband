@@ -1,10 +1,10 @@
-# BERT-PLI: Modeling Paragraph-Level Interactions for Legal Case Retrieval
+# GridSearch Skyband: Otimização de Hiperparâmetros para Modelos de Linguagem
 
 ![Python](https://img.shields.io/badge/python-3.11-blue?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-%E2%89%A52.9.0-EE4C2C?logo=pytorch&logoColor=white)
 ![Transformers](https://img.shields.io/badge/transformers-%E2%89%A55.2.0-FFD21E?logo=huggingface&logoColor=black)
 ![codecarbon](https://img.shields.io/badge/codecarbon-%E2%89%A53.2.2-4CAF50?logo=leaflet&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-101%20passing-brightgreen?logo=pytest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-128%20passing-brightgreen?logo=pytest&logoColor=white)
 
 Para executar no **Google Colab**, acesse:
 
@@ -24,8 +24,8 @@ O projeto usa [`uv`](https://docs.astral.sh/uv/) como gerenciador de ambiente e 
 
 ```bash
 # 1. Clone o repositório
-git clone https://github.com/gassantos/ExperimentoBERT-PLI.git
-cd ExperimentoBERT-PLI
+git clone https://github.com/gassantos/gridsearch-skyband.git
+cd gridsearch-skyband
 
 # 2. Crie o ambiente virtual e instale as dependências de produção
 uv sync
