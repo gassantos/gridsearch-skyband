@@ -77,55 +77,47 @@ uv run --group dev pytest tests/test_warmup_scheduler.py::TestSchedulerLRBehavio
 
 ```mermaid
 flowchart TB
- subgraph Fase1["⚙️ 1. Pré-processamento"]
+ subgraph ORC["① Orquestração"]
     direction LR
-        P1["✂️ Segmentação em Parágrafos"]
+        A["main.py<br>--mode single | grid"]
+        B[["GridSearch Core<br>Process Pool · spawn"]]
   end
- subgraph Fase2["🧠 2. Extração de Features"]
+ subgraph EXEC["② Execução"]
     direction LR
-        DB1[("💾 Pesos BERT Pré-treinados")]
-        P2["🤖 Codificação BERT"]
-        DB2[("📦 Cache de Embeddings")]
+        D["init_all()  →  run_train()<br>Pipeline"]
+        E{{"CodeCarbon · psutil<br>TeeStream"}}
   end
- subgraph Fase3["🔀 3. Modelagem"]
+ subgraph RESULT["③ Resultados"]
     direction LR
-        P3["🔀 Modelagem de Interações"]
-        P4["🧠 Agregação GRU/LSTM + Atenção"]
+        G["Precision · Recall · F1 · Accuracy"]
+        F[/"Makespan · CO₂ kg · kWh · USD"/]
   end
- subgraph Fase4["📊 4. Decisão e Métricas"]
-    direction LR
-        P5["🎯 P5 Scoring de Entailment"]
-        P6["📈 P6 Avaliação Rec·Prec·F1"]
-  end
-    DB1 -. Carregamento .-> P2
-    P2 -- Tensores [CLS] --> DB2
-    P3 -- Matriz de interações --> P4
-    P5 -- Scores (Logits) --> P6
-    IN[/"🗂️ Par de Docs Jurídicos"/] -- Casos brutos --> P1
-    P1 -- "Seq. de parágrafos (Tokens)" --> P2
-    DB2 -- Representações vetoriais --> P3
-    P4 -- Vetor de contexto --> P5
-    P6 -- Métricas finais --> OUT[/"📋 Ranking de Relevância"/]
+    A -- "mode = grid" --> B
+    A -- "mode = single" --> C(["execute_experiment()<br>Motor de Execução Central"])
+    B --> C
+    C --> D
+    C -. thread daemon .-> E
+    D --> G & F
+    E --> F
+    G --> H[("JSON por execução<br>CSV Histórico Acumulado")]
+    F --> H
 
-     P1:::preproc
-     DB1:::store
-     P2:::encoding
-     DB2:::store
-     P3:::interaction
-     P4:::aggregation
-     P5:::scoring
-     P6:::evaluation
-     IN:::io
-     OUT:::io
-    classDef io         fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e,font-weight:bold
-    classDef store      fill:#f1f5f9,stroke:#475569,stroke-width:2px,color:#1e293b,font-weight:bold
-    classDef preproc    fill:#ffedd5,stroke:#ea580c,stroke-width:2px,color:#7c2d12,font-weight:bold
-    classDef encoding   fill:#fef9c3,stroke:#ca8a04,stroke-width:2px,color:#713f12,font-weight:bold
-    classDef interaction fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#2e1065,font-weight:bold
-    classDef aggregation fill:#fce7f3,stroke:#db2777,stroke-width:2px,color:#831843,font-weight:bold
-    classDef scoring    fill:#ccfbf1,stroke:#0d9488,stroke-width:2px,color:#134e4a,font-weight:bold
-    classDef evaluation fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d,font-weight:bold
-    classDef cluster    fill:#ffffff,stroke:#cbd5e1,stroke-width:2px,stroke-dasharray: 5 5,rx:10,ry:10
+     A:::cli
+     B:::gridsearch
+     C:::engine
+     D:::training
+     E:::monitoring
+     G:::evaluation
+     F:::criteria
+     H:::persistence
+    classDef cli         fill:#1f6feb,stroke:#79c0ff,color:#fff,font-weight:bold
+    classDef gridsearch  fill:#6e40c9,stroke:#a371f7,color:#fff,font-weight:bold
+    classDef engine      fill:#e36209,stroke:#f0883e,color:#fff,font-weight:bold
+    classDef training    fill:#2ea043,stroke:#56d364,color:#fff,font-weight:bold
+    classDef monitoring  fill:#9a6700,stroke:#d29922,color:#fff,font-weight:bold
+    classDef criteria    fill:#8250df,stroke:#bc8cff,color:#fff,font-weight:bold
+    classDef evaluation  fill:#b91c1c,stroke:#f87171,color:#fff,font-weight:bold
+    classDef persistence fill:#0f766e,stroke:#2dd4bf,color:#fff,font-weight:bold
 ```
 
 ---
