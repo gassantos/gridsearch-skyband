@@ -16,6 +16,7 @@ dependencies = [
     "torchvision>=0.20.0",
     "tqdm>=4.67.1",
     "transformers[torch]>=5.2.0",
+    "torch_xla; sys_platform == 'linux'"
 ]
 
 [project.scripts]

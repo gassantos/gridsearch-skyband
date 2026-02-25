@@ -4,33 +4,13 @@ Suporta CUDA (NVIDIA), TPU (TorchXLA), MPS (Apple Silicon) e CPU.
 """
 from __future__ import annotations
 
+import sys
 import platform
 import logging
-from typing import TYPE_CHECKING
+import torch
 
-# Importações apenas para o analisador de tipos (Pylance/mypy).
-# Em runtime TYPE_CHECKING é sempre False, portanto estes imports
-# não geram custo de inicialização nem dependência obrigatória.
-if TYPE_CHECKING:
-    import torch
-    import torch_xla.core.xla_model as xm  # type: ignore[import-not-found]
 
 logger = logging.getLogger(__name__)
-
-try:
-    import torch  # type: ignore[no-redef]
-
-    try:
-        import torch_xla.core.xla_model as xm  # type: ignore[no-redef]
-        _XLA_AVAILABLE = True
-    except (ImportError, OSError) as e:
-        xm = None  # type: ignore[assignment]
-        _XLA_AVAILABLE = False
-        logger.warning(f"Torch_XLA não disponível: {e}")
-
-except (ImportError, OSError):
-    torch = None  # type: ignore[assignment]
-    logger.warning("PyTorch não disponível neste ambiente")
 
 
 def get_device(prefer_cpu: bool = False):
@@ -61,6 +41,14 @@ def get_device(prefer_cpu: bool = False):
         logger.info(f"Using CUDA GPU: {gpu_name} ({gpu_memory:.2f} GB)")
         return device
     
+    elif sys.platform == "linux":
+        try:
+            import torch_xla.core.xla_model as xm
+            return xm.xla_device()
+        except ImportError as e:
+            _XLA_AVAILABLE = False
+            logger.warning(f"Torch_XLA não disponível: {e}")
+
     # macOS com Apple Silicon (MPS)
     elif system == "Darwin" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         device = torch.device("mps")
@@ -147,12 +135,18 @@ def set_device_optimization(device):
 
 def get_torch_device() -> dict:
     """Retorna o dispositivo PyTorch disponível (CPU, GPU ou TPU)."""
-    if xm is not None and _XLA_AVAILABLE and len(xm.get_xla_supported_devices()) > 0:
-        return {
-            'type': 'TPU',
-            'name': xm.xla_device_kind(),
-            'device': xm.xla_device()
-        }
+    if sys.platform == "linux":
+        try:
+            import torch_xla.core.xla_model as xm
+            if xm is not None and len(xm.get_xla_supported_devices()) > 0:
+                return {
+                    'type': 'TPU',
+                    'name': xm.xla_device_kind(),
+                    'device': xm.xla_device()
+                }
+        except ImportError:
+            pass  # Torch_XLA não disponível
+    
     if torch is not None and torch.cuda.is_available():
         return {
             'type': 'GPU',
