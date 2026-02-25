@@ -6,10 +6,6 @@
 ![codecarbon](https://img.shields.io/badge/codecarbon-%E2%89%A53.2.2-4CAF50?logo=leaflet&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-128%20passing-brightgreen?logo=pytest&logoColor=white)
 
-Para executar no **Google Colab**, acesse:
-
-- [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1ptcAKCC_f7lX5y9B_zJ3iisO11W1Ny2K)
-
 ## Instalação
 
 O projeto usa [`uv`](https://docs.astral.sh/uv/) como gerenciador de ambiente e dependências. O `requirements.txt` presente no repositório é gerado automaticamente — **não o edite diretamente**; a fonte de verdade é o `pyproject.toml`.
