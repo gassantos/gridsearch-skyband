@@ -3,7 +3,7 @@ name = "experimentobert-pli"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "codecarbon>=3.2.2",
     "configparser>=7.2.0",
@@ -16,7 +16,7 @@ dependencies = [
     "torchvision>=0.20.0",
     "tqdm>=4.67.1",
     "transformers[torch]>=5.2.0",
-    "torch_xla; sys_platform == 'linux'"
+    "torch_xla>=2.9.0; sys_platform == 'linux'"
 ]
 
 [project.scripts]
