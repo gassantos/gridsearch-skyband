@@ -152,3 +152,6 @@ target/
 # *.pkl
 # *.h5
 # data/
+
+examples/pretrain_models/*
+output/*

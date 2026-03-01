@@ -304,7 +304,7 @@ ranked = sorted(configs, key=lambda x: x['score'])
     "resources": {
         "train_time_sec": float,     # Segundos
         "energy_kwh": float,          # kWh consumidos
-        "peak_ram_mb": float,         # MB pico
+        "total_gflops": float,        # GFLOPS por epoch
         "gpu_util_avg": float,        # % utilização GPU
         ...
     },
