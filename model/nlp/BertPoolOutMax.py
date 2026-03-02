@@ -14,8 +14,9 @@ __author__ = 'yshao'
 
 import torch
 import torch.nn as nn
-from transformers import BertModel
+from transformers import AutoModel
 import logging
+from utils.paths import PathManager
 logger = logging.getLogger(__name__)
 
 class BertPoolOutMax(nn.Module):
@@ -43,7 +44,10 @@ class BertPoolOutMax(nn.Module):
         self.max_para_q = config.getint('model', 'max_para_q')
         self.step = config.getint('model', 'step')
         self.max_len = config.getint("data", "max_seq_length")
-        self.bert = BertModel.from_pretrained(config.get("model", "bert_path"))
+        self.bert = AutoModel.from_pretrained(
+            config.get("model", "bert_path"),
+            cache_dir=str(PathManager.HF_HUB_CACHE_DIR),
+        )
         # self.maxpool = nn.MaxPool1d(kernel_size=self.max_para_c)
         self.maxpool = nn.MaxPool2d(kernel_size=(1, self.max_para_c))
 

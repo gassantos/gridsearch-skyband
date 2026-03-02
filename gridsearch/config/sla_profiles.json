@@ -1,0 +1,235 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "description": "Biblioteca de perfis de SLA para consultas Skyband em pipelines de ML",
+    "author": "Gustavo Alexandre",
+    "date": "2026-03-01",
+    "reference": "skyband_query(results, k=profile['skyband_k'], sla_constraints=profile['constraints'], metrics=profile['metrics'], minimize=profile['minimize'])",
+    "supported_metrics_skyband": [
+      "train_time_sec",
+      "energy_kwh",
+      "total_gflops",
+      "emissions_kg_co2",
+      "cost_usd"
+    ],
+    "supported_constraints_sla": [
+      "train_time_sec",
+      "energy_kwh",
+      "peak_ram_mb",
+      "emissions_kg_co2",
+      "cost_usd"
+    ],
+    "notes": [
+      "Valores null em constraints significam 'sem limite superior'.",
+      "skyband_k define a ordem do Skyband recomendada para o perfil.",
+      "weights_scalar são usados em compare_skyband_vs_ranking() para benchmark.",
+      "Os valores de constraint são referências baseadas em hardware de 2026.",
+      "Ajuste os thresholds conforme o ambiente real de execução."
+    ]
+  },
+
+  "profiles": {
+
+    "economico": {
+      "description": "Perfil para execução com orçamento restrito. Prioriza minimização de custo financeiro direto. Adequado para pesquisadores com crédito limitado em nuvem ou bolsistas com budget controlado.",
+      "context": "Pesquisa acadêmica com crédito de nuvem limitado (ex: $50/mês)",
+      "constraints": {
+        "cost_usd":          2.00,
+        "train_time_sec":    null,
+        "energy_kwh":        null,
+        "peak_ram_mb":       null,
+        "emissions_kg_co2":  null
+      },
+      "skyband_k": 2,
+      "metrics": [
+        "cost_usd",
+        "train_time_sec",
+        "energy_kwh"
+      ],
+      "minimize": [true, true, true],
+      "weights_scalar": [0.60, 0.25, 0.15],
+      "recommended_environments": ["colab", "local", "gcp"]
+    },
+
+    "sustentavel": {
+      "description": "Perfil green-AI. Prioriza redução de emissões de CO₂ e consumo de energia. Indicado para projetos com compromissos de sustentabilidade ou certificações ambientais.",
+      "context": "Green-AI / relatório de sustentabilidade institucional",
+      "constraints": {
+        "cost_usd":          null,
+        "train_time_sec":    null,
+        "energy_kwh":        0.050,
+        "peak_ram_mb":       null,
+        "emissions_kg_co2":  0.010
+      },
+      "skyband_k": 2,
+      "metrics": [
+        "emissions_kg_co2",
+        "energy_kwh",
+        "train_time_sec"
+      ],
+      "minimize": [true, true, true],
+      "weights_scalar": [0.50, 0.35, 0.15],
+      "recommended_environments": ["colab", "gcp", "local"]
+    },
+
+    "tempo": {
+      "description": "Perfil para janelas de treinamento rígidas. Prioriza minimização do tempo de treino. Adequado para ambientes com limite de sessão (ex: Google Colab 12h) ou deadlines de conferência.",
+      "context": "Colab / deadline iminente / iteração rápida de experimentos",
+      "constraints": {
+        "cost_usd":          null,
+        "train_time_sec":    3600,
+        "energy_kwh":        null,
+        "peak_ram_mb":       null,
+        "emissions_kg_co2":  null
+      },
+      "skyband_k": 3,
+      "metrics": [
+        "train_time_sec",
+        "energy_kwh",
+        "cost_usd"
+      ],
+      "minimize": [true, true, true],
+      "weights_scalar": [0.70, 0.15, 0.15],
+      "recommended_environments": ["aws", "gcp", "colab"]
+    },
+
+    "balanceado": {
+      "description": "Perfil de compromisso entre custo, tempo e impacto ambiental. Recomendado para a maioria dos experimentos de pesquisa sem restrições críticas em nenhuma dimensão específica.",
+      "context": "Uso geral — pesquisa e desenvolvimento sem restrição dominante",
+      "constraints": {
+        "cost_usd":          5.00,
+        "train_time_sec":    7200,
+        "energy_kwh":        0.100,
+        "peak_ram_mb":       null,
+        "emissions_kg_co2":  0.020
+      },
+      "skyband_k": 3,
+      "metrics": [
+        "train_time_sec",
+        "cost_usd",
+        "energy_kwh",
+        "emissions_kg_co2"
+      ],
+      "minimize": [true, true, true, true],
+      "weights_scalar": [0.30, 0.30, 0.20, 0.20],
+      "recommended_environments": ["local", "gcp", "colab"]
+    },
+
+    "dev": {
+      "description": "Perfil para máquinas locais de desenvolvimento com RAM e overhead computacional restritos. Filtra experimentos que excedem 8 GB de RAM (constraint de execução) e minimiza GFLOPs como critério Skyband. Útil para validação de pipeline antes de execução em nuvem.",
+      "context": "Notebook/workstation local (16 GB RAM, GPU consumer)",
+      "constraints": {
+        "cost_usd":          null,
+        "train_time_sec":    1800,
+        "energy_kwh":        null,
+        "peak_ram_mb":       8192,
+        "emissions_kg_co2":  null
+      },
+      "skyband_k": 2,
+      "metrics": [
+        "total_gflops",
+        "train_time_sec",
+        "energy_kwh"
+      ],
+      "minimize": [true, true, true],
+      "weights_scalar": [0.50, 0.35, 0.15],
+      "recommended_environments": ["local"]
+    },
+
+    "producao": {
+      "description": "Perfil para ambiente de produção com SLA de latência rígido e alto throughput. Filtra experimentos acima de 16 GB de RAM (constraint de execução). Minimiza GFLOPs como critério Skyband para favorecer modelos computacionalmente eficientes. Indicado para retreinamentos frequentes em produção.",
+      "context": "Retreinamento contínuo / CI-CD de modelos / MLOps",
+      "constraints": {
+        "cost_usd":          20.00,
+        "train_time_sec":    1800,
+        "energy_kwh":        null,
+        "peak_ram_mb":       16384,
+        "emissions_kg_co2":  null
+      },
+      "skyband_k": 5,
+      "metrics": [
+        "train_time_sec",
+        "total_gflops",
+        "cost_usd"
+      ],
+      "minimize": [true, true, true],
+      "weights_scalar": [0.55, 0.25, 0.20],
+      "recommended_environments": ["aws", "azure", "gcp"]
+    }
+
+  },
+
+  "environments": {
+
+    "local": {
+      "description": "GPU NVIDIA RTX 3090 em workstation local",
+      "gpu": "NVIDIA RTX 3090",
+      "vram_gb": 24,
+      "cost_per_hour_usd": 0.04,
+      "co2_factor_kg_per_kwh": 0.233,
+      "region": "local",
+      "notes": [
+        "Custo estimado apenas de energia elétrica (~0,04 USD/kWh × consumo médio GPU).",
+        "Fator CO₂ varia por região elétrica do usuário (valor padrão: BR média).",
+        "Sem limite de sessão."
+      ]
+    },
+
+    "colab": {
+      "description": "Google Colab (tier gratuito ou Pro) com GPU T4",
+      "gpu": "NVIDIA T4",
+      "vram_gb": 16,
+      "cost_per_hour_usd": 0.00,
+      "co2_factor_kg_per_kwh": 0.082,
+      "region": "us-central1",
+      "notes": [
+        "Custo zero no tier gratuito; ~0.50 USD/sessão no Colab Pro+.",
+        "Fator CO₂ baixo devido à energia renovável da GCP us-central1.",
+        "Sessão limitada a ~12h; risco de desconexão."
+      ]
+    },
+
+    "gcp": {
+      "description": "Google Cloud Platform — instância n1-standard-4 + GPU T4",
+      "gpu": "NVIDIA T4",
+      "vram_gb": 16,
+      "cost_per_hour_usd": 0.35,
+      "co2_factor_kg_per_kwh": 0.082,
+      "region": "us-central1",
+      "notes": [
+        "Preço spot pode reduzir custo em até 70%.",
+        "Fator CO₂ baixíssimo pela matriz renovável da GCP.",
+        "Recomendado para experimentos sustentáveis de custo médio."
+      ]
+    },
+
+    "aws": {
+      "description": "Amazon Web Services — instância g4dn.xlarge (T4 + 4 vCPUs)",
+      "gpu": "NVIDIA T4",
+      "vram_gb": 16,
+      "cost_per_hour_usd": 0.526,
+      "co2_factor_kg_per_kwh": 0.385,
+      "region": "us-east-1",
+      "notes": [
+        "Instância on-demand; Spot ~60% mais barata.",
+        "us-east-1 tem fator CO₂ mais alto que GCP.",
+        "Bom custo-benefício para treinos de ~1-4h."
+      ]
+    },
+
+    "azure": {
+      "description": "Microsoft Azure — instância NC6s v3 (V100 16GB + 6 vCPUs)",
+      "gpu": "NVIDIA V100",
+      "vram_gb": 16,
+      "cost_per_hour_usd": 0.90,
+      "co2_factor_kg_per_kwh": 0.190,
+      "region": "eastus",
+      "notes": [
+        "V100 oferece maior throughput que T4 para batch_size grandes.",
+        "Spot/Preemptible reduz custo em ~60%.",
+        "Indicado para perfil 'producao' com batch_size=32."
+      ]
+    }
+
+  }
+}

@@ -8,7 +8,7 @@
 
 ## Instalação
 
-O projeto usa [`uv`](https://docs.astral.sh/uv/) como gerenciador de ambiente e dependências. O `requirements.txt` presente no repositório é gerado automaticamente — **não o edite diretamente**; a fonte de verdade é o `pyproject.toml`.
+O projeto usa [`uv`](https://docs.astral.sh/uv/) como gerenciador de ambiente e dependências. O `requirements.txt` presente no repositório é gerado automaticamente — **não o edite diretamente**; o referencial é o `pyproject.toml`.
 
 ### Pré-requisitos
 

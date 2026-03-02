@@ -117,7 +117,12 @@ _ENERGY_COST_USD_PER_KWH = float(os.getenv("ENERGY_COST_USD_PER_KWH", "0.12"))
 # =========================
 # MAIN WRAPPER
 # =========================
-def execute_experiment(config_path: str, gpu_list: list[int] | None = None) -> None:
+def execute_experiment(
+    config_path: str,
+    gpu_list: list[int] | None = None,
+    parallel_workers: int = 1,
+    train_file: str | None = None,
+) -> None:
     """Executa um experimento completo de forma rastreável.
 
     Realiza treino in-process com captura de stdout, amostragem contínua
@@ -128,6 +133,14 @@ def execute_experiment(config_path: str, gpu_list: list[int] | None = None) -> N
         config_path: Caminho para o arquivo ``.config`` do experimento.
         gpu_list: Lista de IDs de GPU a utilizar. ``None`` seleciona GPU 0
             se disponível, ou CPU caso contrário.
+        parallel_workers: Número de workers paralelos usados no grid search
+            que invocou este experimento (1 = sequencial ou modo single).
+            Salvo no JSON e CSV para rastreabilidade.
+        train_file: Nome do arquivo de treino sem extensão (ex:
+            ``"train_task2_v2"``). Quando fornecido, substitui
+            ``train_file_list`` na seção ``[data]`` do config antes de
+            iniciar o treinamento. ``None`` mantém o valor do arquivo
+            de configuração original.
 
     Side effects:
         - Escreve ``output/experiments/metrics/<nome>_<data>.json``
@@ -135,12 +148,33 @@ def execute_experiment(config_path: str, gpu_list: list[int] | None = None) -> N
         - Acrescenta linha em ``output/experiments/metrics/EmissionsCO2_<device>_<data>.csv``
           (quando ``enable_monitoring = true``)
     """
+    import tempfile as _tempfile
+
+    # Se train_file fornecido, cria config temporário com train_file_list sobrescrito
+    _temp_config_path: str | None = None
+    if train_file is not None:
+        _base_cfg = load_config(config_path)
+        if not _base_cfg.has_section("data"):
+            _base_cfg.add_section("data")
+        _base_cfg.set("data", "train_file_list", f"{train_file}.json")
+        _fd, _temp_config_path = _tempfile.mkstemp(suffix=".config")
+        os.close(_fd)
+        with open(_temp_config_path, "w") as _f:
+            _base_cfg.write(_f)
+        config_path = _temp_config_path
+
     cfg = load_config(config_path)
 
     exp =   cfg["experiment"]
     train = cfg["train"]
     env =   cfg["environment"]
     mon =   cfg["monitoring"]
+
+    # Nome do dataset de treino utilizado (para rastreabilidade)
+    _train_dataset_name = (
+        cfg.get("data", "train_file_list", fallback="").replace(".json", "")
+        or "train_task2"
+    )
 
     experiment_id = str(uuid.uuid4())
     device_type = _torch_device_info['type']
@@ -251,6 +285,12 @@ def execute_experiment(config_path: str, gpu_list: list[int] | None = None) -> N
         sys.stdout = tee.original
         output_lines = tee.lines
         stdout = "".join(output_lines)
+        # Remove config temporário se foi criado
+        if _temp_config_path and os.path.exists(_temp_config_path):
+            try:
+                os.unlink(_temp_config_path)
+            except OSError:
+                pass
 
     # -------- STOP ENERGY TRACKER --------
     emissions_kg = None
@@ -424,6 +464,10 @@ def execute_experiment(config_path: str, gpu_list: list[int] | None = None) -> N
             "device_name": device_name,
             "precision": env["precision"]
         },
+        "execution": {
+            "parallel_workers": parallel_workers,
+            "train_dataset": _train_dataset_name,
+        },
         "hyperparameters": {
             "optimizer": train["optimizer"],
             "learning_rate": float(train["learning_rate"]),
@@ -467,6 +511,8 @@ def execute_experiment(config_path: str, gpu_list: list[int] | None = None) -> N
                 "config_name",
                 "seed",
                 "device_type",
+                "parallel_workers",
+                "train_dataset",
                 "optimizer",
                 "learning_rate",
                 "batch_size",
@@ -493,6 +539,8 @@ def execute_experiment(config_path: str, gpu_list: list[int] | None = None) -> N
             json_filename,
             exp["seed"],
             device_type,
+            parallel_workers,
+            _train_dataset_name,
             train["optimizer"],
             train["learning_rate"],
             train["batch_size"],

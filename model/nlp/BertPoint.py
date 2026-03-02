@@ -13,9 +13,10 @@ __author__ = 'yshao'
 
 import torch
 import torch.nn as nn
-from transformers import BertModel
+from transformers import AutoModel
 
 from tools.accuracy_init import init_accuracy_function
+from utils.paths import PathManager
 
 
 class BertPoint(nn.Module):
@@ -44,7 +45,10 @@ class BertPoint(nn.Module):
         self.output_dim = config.getint("model", "output_dim")
         self.output_mode = config.get('model', 'output_mode')
 
-        self.bert = BertModel.from_pretrained(config.get("model", "bert_path"))
+        self.bert = AutoModel.from_pretrained(
+            config.get("model", "bert_path"),
+            cache_dir=str(PathManager.HF_HUB_CACHE_DIR),
+        )
         # Lê hidden_size diretamente do backbone carregado — compatível com
         # bert-base (768), bert-large (1024), DeBERTa, RoBERTa, LegalBERT, etc.
         self.hidden_size = self.bert.config.hidden_size

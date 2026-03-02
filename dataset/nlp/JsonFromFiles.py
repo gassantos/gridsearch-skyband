@@ -155,7 +155,9 @@ class JsonFromFilesDataset(Dataset):
                     }
 
                 delta = idx - self.temp_file_list[which]["cnt"]
-                self.temp_file_list[which]["file"].readlines(delta)
+                # readlines(hint) recebe bytes, não linhas — usar readline() por iteração
+                for _ in range(delta):
+                    self.temp_file_list[which]["file"].readline()
 
                 data = json.loads(self.temp_file_list[which]["file"].readline())
                 self.temp_file_list[which]["cnt"] = idx + 1
@@ -168,3 +170,13 @@ class JsonFromFilesDataset(Dataset):
             return len(self.data)
         else:
             return self.total
+
+    def __del__(self):
+        """Fecha todos os file handles abertos no modo lazy (JSONL)."""
+        for entry in getattr(self, "temp_file_list", []):
+            f = entry.get("file")
+            if f is not None and not f.closed:
+                try:
+                    f.close()
+                except Exception:
+                    pass

@@ -153,6 +153,6 @@ target/
 # *.h5
 # data/
 
-# Custom directories to ignore
-/examples/pretrain_models
-/output
+# Data directories to ignore
+examples/pretrain_models/*
+output/*
