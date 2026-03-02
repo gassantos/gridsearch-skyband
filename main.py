@@ -54,6 +54,7 @@ DEFAULT_MODE = "grid"
 DEFAULT_PARALLEL = 2
 DEFAULT_SLA_PROFILES = "gridsearch/config/sla_profiles.json"
 DEFAULT_SKYBAND_K = 3
+DEFAULT_TRAIN_DATASET = "train_task2"
 
 
 def validate_paths(config_path: str, grid_config_path: Optional[str] = None) -> bool:
@@ -81,12 +82,15 @@ def validate_paths(config_path: str, grid_config_path: Optional[str] = None) -> 
     return True
 
 
-def run_single_experiment(config_path: str):
+def run_single_experiment(config_path: str, train_dataset: str = DEFAULT_TRAIN_DATASET):
     """
     Executa um único experimento.
     
     Args:
         config_path: Caminho do arquivo de configuração
+        train_dataset: Nome do arquivo de treino sem extensão.
+            Padrão: ``DEFAULT_TRAIN_DATASET`` (``"train_task2"``). Outras
+            opções: ``"train_task2_v2"``, ``"train_task2_v3"``.
     """
     # Import lazy para evitar inicialização de CUDA no processo principal
     from run_experiment import execute_experiment
@@ -94,12 +98,17 @@ def run_single_experiment(config_path: str):
     logger.info("=" * 70)
     logger.info("MODO: Experimento Único")
     logger.info(f"Configuração: {config_path}")
+    logger.info(f"Dataset de treino: {train_dataset}.json")
     logger.info("=" * 70)
     
     if not validate_paths(config_path):
         sys.exit(1)
     
-    execute_experiment(config_path)
+    execute_experiment(
+        config_path,
+        parallel_workers=1,
+        train_file=train_dataset if train_dataset != DEFAULT_TRAIN_DATASET else None,
+    )
     logger.info("Experimento concluído com sucesso!")
 
 
@@ -282,7 +291,8 @@ def run_grid_search_experiments(
     base_config_path: str,
     grid_config_path: str,
     parallel: int = 1,
-    resume: bool = False
+    resume: bool = False,
+    train_dataset: str = DEFAULT_TRAIN_DATASET,
 ):
     """
     Executa grid search de hiperparâmetros.
@@ -292,12 +302,16 @@ def run_grid_search_experiments(
         grid_config_path: Caminho do arquivo JSON com grade de hiperparâmetros
         parallel: Número de processos paralelos
         resume: Se True, retoma execução anterior
+        train_dataset: Nome do arquivo de treino sem extensão.
+            Padrão: ``DEFAULT_TRAIN_DATASET`` (``"train_task2"``). Outras
+            opções: ``"train_task2_v2"``, ``"train_task2_v3"``.
     """
     logger.info("=" * 70)
     logger.info("MODO: Grid Search")
     logger.info(f"Configuração base: {base_config_path}")
     logger.info(f"Grid config: {grid_config_path}")
     logger.info(f"Execução: {'Paralela (' + str(parallel) + ' workers)' if parallel > 1 else 'Sequencial'}")
+    logger.info(f"Dataset de treino: {train_dataset}.json")
     logger.info("=" * 70)
     
     if not validate_paths(base_config_path, grid_config_path):
@@ -312,7 +326,8 @@ def run_grid_search_experiments(
         base_config_path=base_config_path,
         grid_config=grid_config,
         resume=resume,
-        parallel=parallel
+        parallel=parallel,
+        train_dataset=train_dataset,
     )
     
     logger.info("Grid search concluído com sucesso!")
@@ -389,6 +404,7 @@ Configurações padrão:
   - Config: {DEFAULT_CONFIG}
   - Grid config: {DEFAULT_GRID_CONFIG}
   - Parallel: {DEFAULT_PARALLEL}
+  - Dataset: {DEFAULT_TRAIN_DATASET}
   - Skyband k: {DEFAULT_SKYBAND_K}
   - SLA profiles: {DEFAULT_SLA_PROFILES}
         """
@@ -427,6 +443,19 @@ Configurações padrão:
         "--resume",
         action="store_true",
         help="Retoma execução anterior de grid search usando estado salvo"
+    )
+
+    parser.add_argument(
+        "--train-dataset",
+        type=str,
+        choices=["train_task2", "train_task2_v2", "train_task2_v3"],
+        default=DEFAULT_TRAIN_DATASET,
+        dest="train_dataset",
+        help=(
+            f"Arquivo de treino a utilizar (sem extensão). "
+            f"Padrão: {DEFAULT_TRAIN_DATASET}. "
+            "Opções: train_task2 | train_task2_v2 | train_task2_v3"
+        ),
     )
 
     # ── Grupo: análise Skyband ───────────────────────────────────────────────
@@ -548,7 +577,7 @@ Configurações padrão:
             )
 
         elif args.mode == "single":
-            run_single_experiment(args.config)
+            run_single_experiment(args.config, train_dataset=args.train_dataset)
             if not args.no_skyband:
                 run_skyband_analysis(
                     k=args.skyband_k,
@@ -564,6 +593,7 @@ Configurações padrão:
                 grid_config_path=args.grid_config,
                 parallel=args.parallel,
                 resume=args.resume,
+                train_dataset=args.train_dataset,
             )
             if not args.no_skyband:
                 run_skyband_analysis(

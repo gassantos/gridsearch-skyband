@@ -111,7 +111,8 @@ def generate_parameter_grid(grid_config: Dict[str, List[Any]]) -> List[Dict[str,
 def create_config_for_combination(
     base_config_path: str,
     params: Dict[str, Any],
-    experiment_idx: int
+    experiment_idx: int,
+    train_file: str = "train_task2",
 ) -> str:
     """
     Cria um arquivo de configuração específico para uma combinação de parâmetros.
@@ -120,6 +121,9 @@ def create_config_for_combination(
         base_config_path: Caminho do arquivo de configuração base
         params: Dicionário com os parâmetros a serem modificados
         experiment_idx: Índice do experimento na grade
+        train_file: Nome do arquivo de treino sem extensão (ex:
+            ``"train_task2_v2"``). Substitui ``train_file_list`` na seção
+            ``[data]`` do config gerado.
         
     Returns:
         Caminho do novo arquivo de configuração criado
@@ -142,6 +146,11 @@ def create_config_for_combination(
     
     if "seed" in params:
         config.set("experiment", "seed", str(params["seed"]))
+    
+    # Atualiza dataset de treino
+    if not config.has_section("data"):
+        config.add_section("data")
+    config.set("data", "train_file_list", f"{train_file}.json")
     
     # Atualiza nome do experimento
     base_name = config.get("experiment", "name")
@@ -180,6 +189,7 @@ def run_single_experiment(
     config_path: str,
     params: Dict[str, Any],
     gpu_list: List[int] | None = None,
+    parallel_workers: int = 1,
 ) -> Dict[str, Any]:
     """
     Executa um único experimento e retorna os resultados.
@@ -189,6 +199,9 @@ def run_single_experiment(
         config_path: Caminho do arquivo de configuração
         params: Parâmetros do experimento
         gpu_list: GPUs a utilizar (ex: [0] ou [1]). None = detecta automaticamente.
+        parallel_workers: Número de workers paralelos em uso no grid search
+            que chamou este experimento (1 = seqüencial). Salvo nos resultados
+            para rastreabilidade.
 
     Returns:
         Dicionário com resultados do experimento
@@ -200,7 +213,7 @@ def run_single_experiment(
     
     try:
         # Executa experimento nas GPUs designadas
-        execute_experiment(config_path, gpu_list=gpu_list)
+        execute_experiment(config_path, gpu_list=gpu_list, parallel_workers=parallel_workers)
         
         # Coleta resultados do arquivo JSON mais recente gerado
         metrics_dir = PathManager.BASE_DIR / "output" / "experiments" / "metrics"
@@ -216,6 +229,7 @@ def run_single_experiment(
         # Adiciona parâmetros ao resultado
         result_data["grid_params"] = params
         result_data["grid_experiment_idx"] = experiment_idx
+        result_data["parallel_workers"] = parallel_workers
         result_data["status"] = "success"
         
         logger.info(f"[{experiment_idx}] Experimento concluído com sucesso")
@@ -240,6 +254,7 @@ def run_grid_search(
     resume: bool = False,
     parallel: int = 1,
     gpu_ids: List[int] | None = None,
+    train_dataset: str = "train_task2",
 ) -> List[Dict[str, Any]]:
     """
     Executa busca em grade completa.
@@ -252,6 +267,9 @@ def run_grid_search(
         gpu_ids: Lista explícita de GPUs disponíveis para distribuição
                  round-robin entre workers (ex: [0, 1, 2, 3]).
                  None = detecta automaticamente via torch.cuda.
+        train_dataset: Nome do arquivo de treino sem extensão (ex:
+                 ``"train_task2_v2"``). Passado a cada config gerado para
+                 o experimento. Padrão: ``"train_task2"``.
 
     Returns:
         Lista com resultados de todos os experimentos
@@ -282,7 +300,7 @@ def run_grid_search(
         if idx in completed_experiments:
             continue
         
-        config_path = create_config_for_combination(base_config_path, params, idx)
+        config_path = create_config_for_combination(base_config_path, params, idx, train_file=train_dataset)
         pending_experiments.append((idx, config_path, params))
     
     if not pending_experiments:
@@ -326,7 +344,7 @@ def run_grid_search(
             initargs=(_LOG_QUEUE,),
         ) as executor:
             futures = {
-                executor.submit(run_single_experiment, idx, cfg, params, _gpu_for(idx)): idx
+                executor.submit(run_single_experiment, idx, cfg, params, _gpu_for(idx), parallel): idx
                 for idx, cfg, params in pending_experiments
             }
             
@@ -347,7 +365,7 @@ def run_grid_search(
     else:
         logger.info("Executando em modo sequencial | GPUs disponíveis: %s", _available_gpus or "CPU")
         for idx, config_path, params in pending_experiments:
-            result = run_single_experiment(idx, config_path, params, _gpu_for(idx))
+            result = run_single_experiment(idx, config_path, params, _gpu_for(idx), parallel_workers=parallel)
             all_results.append(result)
             completed_experiments.add(idx)
             
