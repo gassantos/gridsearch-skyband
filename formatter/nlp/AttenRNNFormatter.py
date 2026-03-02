@@ -26,7 +26,6 @@ class AttenRNNFormatter(BasicFormatter):
         """Lê ``max_para_q`` da secção ``[model]`` para validar o tamanho do embedding."""
         super().__init__(config, mode, *agrs, **params)
         self.max_para_q = config.getint('model', 'max_para_q')
-        self.mode = mode
 
     def process(self, data, config, mode, *args, **params):
         """Converte um batch de exemplos em tensores para AttentionRNN.

@@ -18,6 +18,7 @@ from transformers import AutoTokenizer
 
 from formatter.Basic import BasicFormatter
 from .bert_feature_tool import example_item_to_feature
+from utils.paths import PathManager
 
 
 class BertDocParaFormatter(BasicFormatter):
@@ -30,9 +31,11 @@ class BertDocParaFormatter(BasicFormatter):
         ``max_seq_length``, ``max_para_c`` e ``max_para_q`` da configuração.
         """
         super().__init__(config, mode, *args, **params)
-        self.tokenizer = AutoTokenizer.from_pretrained(config.get("model", "bert_path"))
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            config.get("model", "bert_path"),
+            cache_dir=str(PathManager.HF_HUB_CACHE_DIR),
+        )
         self.max_len = config.getint("data", "max_seq_length")
-        self.mode = mode
         self.output_mode = config.get('model', 'output_mode')
         self.max_para_c = config.getint('model', 'max_para_c')
         self.max_para_q = config.getint('model', 'max_para_q')
@@ -65,9 +68,10 @@ class BertDocParaFormatter(BasicFormatter):
 
         for temp in data:
             guid = temp['guid']
-            label = temp['label']
             q_paras = temp['q_paras']
             c_paras = temp['c_paras']
+            # label apenas fora do modo test (evita KeyError em dados sem rótulo)
+            label = temp['label'] if mode != 'test' else None
             input_ids_item = []
             attention_mask_item = []
             token_type_ids_item = []
