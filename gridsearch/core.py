@@ -62,6 +62,14 @@ ENERGY_COST_USD_PER_KWH = float(os.getenv("ENERGY_COST_USD_PER_KWH", "0.12"))
 ensure_output_directories()
 
 
+def _extract_backend_labels(result: Dict[str, Any]) -> tuple[str, str]:
+    """Extrai backend solicitado/resolvido com fallback para resultados legados."""
+    env = result.get("environment") or {}
+    requested = str(env.get("backend_requested") or "unknown")
+    resolved = str(env.get("backend_resolved") or "unknown")
+    return requested, resolved
+
+
 # ============================================================================
 # GERAÇÃO DE COMBINAÇÕES
 # ============================================================================
@@ -468,6 +476,16 @@ def analyze_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             result["resources"]["cost_usd"] = cost_usd
         else:
             result["resources"]["cost_usd"] = None
+
+    # Agrega distribuição por backend solicitado/resolvido
+    backend_breakdown: Dict[str, Dict[str, int]] = {}
+    for result in successful:
+        requested, resolved = _extract_backend_labels(result)
+        if requested not in backend_breakdown:
+            backend_breakdown[requested] = {}
+        backend_breakdown[requested][resolved] = (
+            backend_breakdown[requested].get(resolved, 0) + 1
+        )
     
     sorted_by_cost = sorted(
         successful,
@@ -481,6 +499,7 @@ def analyze_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         "successful": len(successful),
         "failed": len(failed),
         "energy_cost_usd_per_kwh": ENERGY_COST_USD_PER_KWH,
+        "backend_breakdown": backend_breakdown,
         
         "best_by_time": {
             "experiment_idx": sorted_by_time[0]["grid_experiment_idx"],
@@ -540,6 +559,18 @@ def generate_summary_report(analysis: Dict[str, Any]) -> str:
     report.append(f"  Bem-sucedidos: {analysis['successful']}")
     report.append(f"  Falhos: {analysis['failed']}")
     report.append("")
+
+    backend_breakdown = analysis.get("backend_breakdown", {})
+    if backend_breakdown:
+        report.append("DISTRIBUICAO DE BACKEND (requested -> resolved):")
+        for requested in sorted(backend_breakdown.keys()):
+            resolved_map = backend_breakdown[requested]
+            resolved_items = ", ".join(
+                f"{resolved}:{resolved_map[resolved]}"
+                for resolved in sorted(resolved_map.keys())
+            )
+            report.append(f"  {requested} -> {resolved_items}")
+        report.append("")
     
     if analysis.get("best_by_time"):
         report.append("MELHOR CONFIGURAÇÃO (Tempo de Treinamento):")

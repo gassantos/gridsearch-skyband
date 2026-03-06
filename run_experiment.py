@@ -29,7 +29,8 @@ import json
 import csv
 import logging
 from datetime import datetime, timezone
-from utils.device import get_torch_device
+from utils.device import get_torch_device, get_tpu_info
+from utils.backend import resolve_execution_backend
 from utils.paths import PathManager
 import torch
 import psutil
@@ -110,6 +111,7 @@ print_system_info()
 # info de processamento (CPU/GPU)
 _torch_device_info = get_torch_device()
 device_name = _torch_device_info['name']
+_tpu_info = get_tpu_info()
 
 # Tarifa de energia (USD/kWh) — configurável via variável de ambiente
 _ENERGY_COST_USD_PER_KWH = float(os.getenv("ENERGY_COST_USD_PER_KWH", "0.12"))
@@ -164,6 +166,7 @@ def execute_experiment(
         config_path = _temp_config_path
 
     cfg = load_config(config_path)
+    backend_meta = resolve_execution_backend(cfg)
 
     exp =   cfg["experiment"]
     train = cfg["train"]
@@ -462,7 +465,11 @@ def execute_experiment(
         "environment": {
             "device_type": device_type,
             "device_name": device_name,
-            "precision": env["precision"]
+            "precision": env["precision"],
+            "backend_requested": backend_meta["backend_requested"],
+            "backend_resolved": backend_meta["backend_resolved"],
+            "backend_reason": backend_meta["backend_reason"],
+            "tpu_info": _tpu_info if device_type == "TPU" else None,
         },
         "execution": {
             "parallel_workers": parallel_workers,
@@ -511,6 +518,11 @@ def execute_experiment(
                 "config_name",
                 "seed",
                 "device_type",
+                "backend_requested",
+                "backend_resolved",
+                "tpu_kind",
+                "xla_device_count",
+                "pjrt_device",
                 "parallel_workers",
                 "train_dataset",
                 "optimizer",
@@ -539,6 +551,11 @@ def execute_experiment(
             json_filename,
             exp["seed"],
             device_type,
+            backend_meta["backend_requested"],
+            backend_meta["backend_resolved"],
+            _tpu_info.get("tpu_kind") if device_type == "TPU" else None,
+            _tpu_info.get("xla_device_count") if device_type == "TPU" else None,
+            _tpu_info.get("pjrt_device") if device_type == "TPU" else None,
             parallel_workers,
             _train_dataset_name,
             train["optimizer"],

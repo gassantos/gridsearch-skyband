@@ -16,7 +16,8 @@ Estratégia de mock:
 from __future__ import annotations
 
 import platform
-from unittest.mock import MagicMock, patch, PropertyMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -178,6 +179,24 @@ class TestGetDeviceInfo:
         info = dev.get_device_info()
         assert info["gpu_count"] >= 1
 
+    def test_xla_keys_present_when_device_is_xla(self):
+        """Inclui chaves de TPU/XLA quando o device detectado é XLA."""
+        mock_xla_device = SimpleNamespace(type="xla")
+        with patch.object(dev, "get_device", return_value=mock_xla_device), \
+             patch.object(dev, "get_tpu_info", return_value={
+                 "xla_available": True,
+                 "xla_supported_devices": ["tpu:0"],
+                 "xla_device_count": 1,
+                 "tpu_kind": "TPU v4",
+                 "xla_device": "xla:0",
+                 "pjrt_device": "TPU",
+             }):
+            info = dev.get_device_info()
+
+        assert info["xla_available"] is True
+        assert info["xla_device_count"] == 1
+        assert info["tpu_kind"] == "TPU v4"
+
 
 # ---------------------------------------------------------------------------
 # set_device_optimization()
@@ -279,3 +298,34 @@ class TestGetTorchDevice:
             result = dev.get_torch_device()
         assert result["type"] == "TPU"
         assert result["name"] == "TPU"
+
+
+class TestGetTpuInfo:
+    """Testes para get_tpu_info()."""
+
+    def test_returns_defaults_when_xla_unavailable(self):
+        with patch.object(dev, "_XLA_AVAILABLE", False), \
+             patch.object(dev, "xm", None):
+            info = dev.get_tpu_info()
+
+        assert info["xla_available"] is False
+        assert info["xla_device_count"] == 0
+        assert info["tpu_kind"] is None
+
+    def test_collects_xla_fields_when_available(self):
+        mock_xm = MagicMock()
+        mock_xm.get_xla_supported_devices.return_value = ["tpu:0", "tpu:1"]
+        mock_xm.xla_device_kind.return_value = "TPU v4"
+        mock_xm.xla_device.return_value = "xla:0"
+
+        with patch.object(dev, "_XLA_AVAILABLE", True), \
+             patch.object(dev, "xm", mock_xm), \
+             patch.dict("os.environ", {"PJRT_DEVICE": "TPU"}, clear=False):
+            info = dev.get_tpu_info()
+
+        assert info["xla_available"] is True
+        assert info["xla_supported_devices"] == ["tpu:0", "tpu:1"]
+        assert info["xla_device_count"] == 2
+        assert info["tpu_kind"] == "TPU v4"
+        assert info["xla_device"] == "xla:0"
+        assert info["pjrt_device"] == "TPU"

@@ -11,6 +11,7 @@ import platform
 import psutil
 from datetime import datetime
 import logging
+from utils.device import get_torch_device as resolve_torch_device, get_tpu_info as resolve_tpu_info
 
 logger = logging.getLogger(__name__)
 
@@ -107,21 +108,12 @@ def get_device_info():
 
 def get_torch_device():
     """Retorna o dispositivo PyTorch disponível."""
-    if not _TORCH_AVAILABLE:
-        return {'type': 'unavailable', 'name': platform.processor(), 'device': None}
-    
-    if torch.cuda.is_available():
-        return {
-            'type': 'gpu',
-            'name': torch.cuda.get_device_name(0),
-            'device': torch.device('cuda')
-        }
-    else:
-        return {
-            'type': 'cpu',
-            'name': platform.processor(),
-            'device': torch.device('cpu') if _TORCH_AVAILABLE else None
-        }
+    return resolve_torch_device()
+
+
+def get_tpu_info():
+    """Retorna informações de TPU/XLA detectadas em utils.device."""
+    return resolve_tpu_info()
 
 
 def collect_system_info():
@@ -133,7 +125,8 @@ def collect_system_info():
         'gpu': get_gpu_info(),
         'disk': get_disk_info(),
         'device': get_device_info(),
-        'torch_device': get_torch_device()
+        'torch_device': get_torch_device(),
+        'tpu': get_tpu_info(),
     }
 
 
@@ -170,5 +163,9 @@ def print_system_info():
     for key, value in info['torch_device'].items():
         if key != 'device':
             print(f"  {key}: {value}")
+
+    print("\n[TPU / XLA]")
+    for key, value in info['tpu'].items():
+        print(f"  {key}: {value}")
     
     print("=" * 50)

@@ -1,6 +1,12 @@
 """
 Fixtures compartilhadas para os testes unitários do projeto ExperimentoBERT-PLI.
 """
+import os
+
+# Evita que o Transformers tente importar torch_xla durante a coleta dos testes
+# em ambientes sem runtime TPU compatível.
+os.environ.setdefault("USE_TORCH_XLA", "0")
+
 import pytest
 import torch
 import torch.nn as nn
