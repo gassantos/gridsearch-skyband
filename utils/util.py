@@ -105,23 +105,10 @@ def get_device_info():
     }
 
 
-def get_torch_device():
-    """Retorna o dispositivo PyTorch disponível."""
-    if not _TORCH_AVAILABLE:
-        return {'type': 'unavailable', 'name': platform.processor(), 'device': None}
-    
-    if torch.cuda.is_available():
-        return {
-            'type': 'gpu',
-            'name': torch.cuda.get_device_name(0),
-            'device': torch.device('cuda')
-        }
-    else:
-        return {
-            'type': 'cpu',
-            'name': platform.processor(),
-            'device': torch.device('cpu') if _TORCH_AVAILABLE else None
-        }
+# Importa a implementação canônica de utils.device para manter uma única fonte
+# de verdade. A versão anterior neste módulo usava casing diferente ('gpu'/'cpu'
+# vs 'GPU'/'CPU'), gerando inconsistências.
+from utils.device import get_torch_device  # noqa: E402, F811
 
 
 def collect_system_info():

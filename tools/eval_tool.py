@@ -4,6 +4,8 @@ import numpy as np
 from collections import defaultdict
 from timeit import default_timer as timer
 
+from utils.device import get_device
+
 logger = logging.getLogger(__name__)
 
 
@@ -88,6 +90,8 @@ def eval_micro_query(_result_list):
 def valid(model, dataset, epoch, writer, config, gpu_list, output_function, mode="valid"):
     model.eval()
 
+    device = get_device()
+
     acc_result = None
     total_loss = 0
     cnt = 0
@@ -102,8 +106,7 @@ def valid(model, dataset, epoch, writer, config, gpu_list, output_function, mode
     for step, data in enumerate(dataset):
         for key in data.keys():
             if isinstance(data[key], torch.Tensor):
-                if len(gpu_list) > 0:
-                    data[key] = data[key].cuda()
+                data[key] = data[key].to(device)
 
         results = model(data, config, gpu_list, acc_result, "valid")
         loss, acc_result, output = results["loss"], results["acc_result"], results["output"]

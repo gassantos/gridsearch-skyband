@@ -16,7 +16,7 @@ Estratégia de mock:
 from __future__ import annotations
 
 import platform
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -200,13 +200,13 @@ class TestSetDeviceOptimization:
             dev.set_device_optimization(_cpu_device())
 
     def test_cuda_enables_tf32(self):
-        """Habilita TF32 e cuDNN benchmark para device CUDA."""
+        """Habilita TF32 para device CUDA."""
         if not torch.cuda.is_available():
             pytest.skip("CUDA não disponível neste ambiente")
         dev.set_device_optimization(_cuda_device())
         assert torch.backends.cuda.matmul.allow_tf32 is True
         assert torch.backends.cudnn.allow_tf32 is True
-        assert torch.backends.cudnn.benchmark is True
+
 
     def test_mps_does_not_raise(self):
         """Não lança exceção para device MPS (experimental)."""

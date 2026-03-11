@@ -104,13 +104,6 @@ def estimate_bert_flops(
     ffn = 8 * seq_len * hidden_size * hidden_size
     return num_layers * (attention + ffn) / 1e9  # GFLOPs
 
-# Exibe informações do sistema para o experimento
-print_system_info()
-
-# info de processamento (CPU/GPU)
-_torch_device_info = get_torch_device()
-device_name = _torch_device_info['name']
-
 # Tarifa de energia (USD/kWh) — configurável via variável de ambiente
 _ENERGY_COST_USD_PER_KWH = float(os.getenv("ENERGY_COST_USD_PER_KWH", "0.12"))
 
@@ -150,6 +143,11 @@ def execute_experiment(
     """
     import tempfile as _tempfile
 
+    # Coleta informações do sistema
+    print_system_info()
+    _torch_device_info = get_torch_device()
+    device_name = _torch_device_info['name']
+
     # Se train_file fornecido, cria config temporário com train_file_list sobrescrito
     _temp_config_path: str | None = None
     if train_file is not None:
@@ -180,7 +178,8 @@ def execute_experiment(
     device_type = _torch_device_info['type']
 
     # Sincroniza o CUDA para garantir que as medições de tempo sejam precisas
-    torch.cuda.synchronize() if torch.cuda.is_available() else None
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
     start_time = time.perf_counter()
     start_iso = now_iso()
     DATE_EXEC = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -309,7 +308,8 @@ def execute_experiment(
 
     # Sincronização CUDA para garantir que todas as operações sejam 
     # concluídas antes de medir o tempo final
-    torch.cuda.synchronize() if torch.cuda.is_available() else None
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
     exec_time = time.perf_counter() - start_time
     end_iso = now_iso()
 
@@ -439,13 +439,13 @@ def execute_experiment(
     # =========================
     
     # Padronização do log filename
-    id = exp["name"]
+    exp_id = exp["name"]
     optmzr = train["optimizer"]
     lr = f"lr{train['learning_rate']}".replace('-', '')
     bs = f"bs{train['batch_size']}"
     ep = f"ep{train['epoch']}"
 
-    json_filename = f"{id}_{optmzr}_{lr}_{bs}_{ep}_{DATE_EXEC}.json"
+    json_filename = f"{exp_id}_{optmzr}_{lr}_{bs}_{ep}_{DATE_EXEC}.json"
 
     cost_usd = float(energy_kwh) * _ENERGY_COST_USD_PER_KWH if energy_kwh is not None else None
 
@@ -569,7 +569,6 @@ def execute_experiment(
 # CLI
 # =========================
 if __name__ == "__main__":
-    import sys
     if len(sys.argv) < 2:
         print("Uso: uv run python run_experiment.py <config_path> [gpu_id ...]")
         print("  Ex. (single GPU): uv run python run_experiment.py config/experiments/BertPLI.config 0")

@@ -39,7 +39,8 @@ Data: 2026-03-01
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -333,17 +334,47 @@ def skyband_query(
         )
         return []
 
-    # 2. Constrói vetores de métricas normalizados por sinal
-    vecs = [_build_vector(r, metrics, minimize) for r in candidates]
+    # 2. Constrói vetores de métricas normalizados por sinal (numpy para performance)
+    try:
+        _use_numpy = True
+    except ImportError:
+        _use_numpy = False
 
-    # 3. Conta quantos pontos dominam cada candidato
-    n = len(candidates)
-    domination_count = [0] * n
+    if _use_numpy:
+        vecs = np.array(
+            [_build_vector(r, metrics, minimize) for r in candidates],
+            dtype=np.float64,
+        )
 
-    for i in range(n):
-        for j in range(n):
-            if i != j and dominates(vecs[j], vecs[i]):
-                domination_count[i] += 1
+        # 3. Conta quantos pontos dominam cada candidato (com early exit)
+        n = len(candidates)
+        domination_count = [0] * n
+
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+                # Dominância vetorizada: j domina i se
+                #   todos(vecs[j] <= vecs[i]) AND algum(vecs[j] < vecs[i])
+                diff = vecs[j] - vecs[i]
+                if np.all(diff <= 0) and np.any(diff < 0):
+                    domination_count[i] += 1
+                    # Early exit: se já é dominado por k ou mais, não precisa
+                    # continuar contando — o ponto será descartado.
+                    if domination_count[i] >= k:
+                        break
+    else:
+        # Fallback sem numpy: usa a implementação Python pura
+        vecs = [_build_vector(r, metrics, minimize) for r in candidates]
+        n = len(candidates)
+        domination_count = [0] * n
+
+        for i in range(n):
+            for j in range(n):
+                if i != j and dominates(vecs[j], vecs[i]):
+                    domination_count[i] += 1
+                    if domination_count[i] >= k:
+                        break
 
     # 4. Seleciona o Skyband_k: dominados por < k outros pontos
     skyband: List[Dict[str, Any]] = []
@@ -435,13 +466,13 @@ def compare_skyband_vs_ranking(
     # Coleta valores brutos por métrica
     raw_values: List[List[Optional[float]]] = []
     for m in metrics:
-        col = [_extract_metric_value(r, m) for r in candidates]
+        col = [_extract_metric_value(r, m) for r in candidates] 
         raw_values.append(col)
 
     # Normalização min-max por coluna
     normalized: List[List[float]] = []
     for col in raw_values:
-        valid = [v for v in col if v != float("inf")]
+        valid = [v for v in col if v != float("inf") and v is not None]
         if not valid:
             normalized.append([0.0] * len(col))
             continue

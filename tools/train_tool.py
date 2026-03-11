@@ -1,5 +1,6 @@
 import logging
 import torch
+import torch.nn as nn
 from pathlib import Path
 from torch.optim import lr_scheduler
 from torch.profiler import profile, ProfilerActivity, record_function
@@ -11,6 +12,7 @@ import json
 
 from tools.eval_tool import valid, gen_time_str, output_value
 from utils.paths import PathManager
+from utils.device import get_device
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,20 @@ def train(parameters, config, gpu_list):
     dataset = parameters["train_dataset"]
     global_step = parameters["global_step"]
     output_function = parameters["output_function"]
+
+    # ── Device portável (CUDA / MPS / CPU) ──────────────────────────────────
+    device = get_device()
+
+    # ── Gradient clipping (padrão recomendado para fine-tuning de BERT) ──────
+    max_grad_norm = config.getfloat("train", "max_grad_norm", fallback=1.0)
+
+    # ── Mixed Precision (AMP) ────────────────────────────────────────────────
+    precision = config.get("environment", "precision", fallback="fp32")
+    use_amp = precision in ("fp16", "bf16") and device.type in ("cuda", "cpu")
+    amp_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
+    scaler = torch.amp.GradScaler(device.type, enabled=(use_amp and precision == "fp16"))
+    if use_amp:
+        logger.info("AMP habilitado: dtype=%s, GradScaler=%s", amp_dtype, scaler.is_enabled())
 
     # Profiling metrics storage
     profiling_metrics = {
@@ -93,6 +109,12 @@ def train(parameters, config, gpu_list):
 
     logger.info("Training start....")
 
+    # ── Early Stopping ───────────────────────────────────────────────────────────
+    es_patience = config.getint("train", "early_stopping_patience", fallback=0)
+    es_counter = 0
+    best_val_loss = float("inf")
+    early_stopped = False
+
     print("Epoch  Stage  Iterations  Time Usage    Loss    Output Information")
 
     total_len = len(dataset)
@@ -114,15 +136,14 @@ def train(parameters, config, gpu_list):
         for step, data in enumerate(dataset):
             for key in data.keys():
                 if isinstance(data[key], torch.Tensor):
-                    if len(gpu_list) > 0:
-                        data[key] = data[key].cuda()
+                    data[key] = data[key].to(device)
 
             optimizer.zero_grad()
 
             # Profile specific batches
             if should_profile and step < 3:
                 activities = [ProfilerActivity.CPU]
-                if len(gpu_list) > 0 and torch.cuda.is_available():
+                if device.type == "cuda":
                     activities.append(ProfilerActivity.CUDA)
                 
                 with profile(
@@ -131,23 +152,29 @@ def train(parameters, config, gpu_list):
                     with_flops=True
                 ) as prof:
                     with record_function("model_forward"):
-                        results = model(data, config, gpu_list, acc_result, "train")
-                        loss, acc_result = results["loss"], results["acc_result"]
+                        with torch.amp.autocast(device.type, dtype=amp_dtype, enabled=use_amp):
+                            results = model(data, config, gpu_list, acc_result, "train")
+                            loss, acc_result = results["loss"], results["acc_result"]
                 
                 # Extract FLOPs from profiler
                 total_flops = sum([evt.flops for evt in prof.key_averages() if evt.flops > 0])
                 profiling_metrics["total_flops"] += total_flops
                 profiling_metrics["profiled_batches"] += 1
                 
-                logger.info(f"Profiled batch {step}: {total_flops / 1e9:.2f} GFLOPs")
+                logger.info("Profiled batch %d: %.2f GFLOPs", step, total_flops / 1e9)
             else:
-                results = model(data, config, gpu_list, acc_result, "train")
-                loss, acc_result = results["loss"], results["acc_result"]
+                with torch.amp.autocast(device.type, dtype=amp_dtype, enabled=use_amp):
+                    results = model(data, config, gpu_list, acc_result, "train")
+                    loss, acc_result = results["loss"], results["acc_result"]
             
             total_loss += loss.detach().item()
 
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            # Gradient clipping (desescala antes de clipar quando AMP está ativo)
+            scaler.unscale_(optimizer)
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+            scaler.step(optimizer)
+            scaler.update()
             if warmup_scheduler is not None:
                 warmup_scheduler.step()
 
@@ -178,12 +205,28 @@ def train(parameters, config, gpu_list):
             with torch.no_grad():
                 eval_res = valid(model, parameters["valid_dataset"], current_epoch, writer, config, gpu_list,
                                  output_function)
-                if eval_res is None:
-                    pass
+                # ── Early Stopping check ────────────────────────────────────────
+                if es_patience > 0 and eval_res is not None:
+                    val_loss = eval_res.get("loss", float("inf"))
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
+                        es_counter = 0
+                    else:
+                        es_counter += 1
+                        logger.info(
+                            "Early stopping: no improvement for %d/%d epochs (best=%.4f, current=%.4f)",
+                            es_counter, es_patience, best_val_loss, val_loss,
+                        )
+                        if es_counter >= es_patience:
+                            logger.info("Early stopping triggered at epoch %d", current_epoch)
+                            early_stopped = True
 
         # StepLR só atua quando não há warmup scheduler (outros otimizadores)
         if warmup_scheduler is None:
             exp_lr_scheduler.step()
+
+        if early_stopped:
+            break
     
     # Save profiling metrics to file
     if profiling_metrics["profiled_batches"] > 0:

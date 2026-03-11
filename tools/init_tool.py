@@ -2,6 +2,7 @@ import logging
 import torch
 
 from utils.reader import init_dataset, init_formatter, init_test_dataset
+from utils.device import get_device
 from model import get_model
 from model.optimizer import init_optimizer
 from .output_init import init_output_function
@@ -13,6 +14,9 @@ logger = logging.getLogger(__name__)
 def init_all(config, gpu_list, checkpoint, mode, *args, **params):
     result = {}
     warmup_scheduler_state = None
+
+    # Device portável (CUDA / MPS / CPU)
+    device = get_device()
 
     logger.info("Begin to initialize dataset and formatter..., mode=%s", mode)
     if mode == "train":
@@ -29,8 +33,8 @@ def init_all(config, gpu_list, checkpoint, mode, *args, **params):
     trained_epoch = 0
     global_step = 0
 
-    if len(gpu_list) > 0:
-        model = model.cuda()
+    if device.type != "cpu":
+        model = model.to(device)
 
         try:
             model.init_multi_gpu(gpu_list, config, *args, **params)

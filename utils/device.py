@@ -12,14 +12,24 @@ import torch
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# XLA availability — exposto como atributo de módulo para permitir mocking
+# ---------------------------------------------------------------------------
+try:
+    import torch_xla.core.xla_model as xm  # type: ignore[import]
+    _XLA_AVAILABLE = True
+except ImportError:
+    xm = None  # type: ignore[assignment]
+    _XLA_AVAILABLE = False
+
 
 def get_device(prefer_cpu: bool = False):
     """
     Detecta o melhor dispositivo disponível de forma multiplataforma.
-    
+
     Args:
         prefer_cpu: Se True, força uso de CPU mesmo com GPU disponível
-    
+
     Returns:
         torch.device: Device otimizado para a plataforma atual, ou None se torch indisponível
     """
@@ -30,9 +40,9 @@ def get_device(prefer_cpu: bool = False):
     if prefer_cpu:
         logger.info("CPU mode forced by user")
         return torch.device("cpu")
-    
+
     system = platform.system()
-    
+
     # Windows/Linux com CUDA
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -40,36 +50,35 @@ def get_device(prefer_cpu: bool = False):
         gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
         logger.info(f"Using CUDA GPU: {gpu_name} ({gpu_memory:.2f} GB)")
         return device
-    
-    elif sys.platform == "linux":
-        try:
-            import torch_xla.core.xla_model as xm
-            return xm.xla_device()
-        except ImportError as e:
-            _XLA_AVAILABLE = False
-            logger.warning(f"Torch_XLA não disponível: {e}")
+
+    # Linux com TPU via XLA
+    if sys.platform == "linux" and _XLA_AVAILABLE and xm is not None:
+        logger.info("Using TPU via Torch_XLA")
+        return xm.xla_device()
+
+    if sys.platform == "linux" and not _XLA_AVAILABLE:
+        logger.warning("Torch_XLA não disponível, usando CPU fallback")
 
     # macOS com Apple Silicon (MPS)
-    elif system == "Darwin" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    if system == "Darwin" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         device = torch.device("mps")
         logger.info("Using Apple Silicon GPU (MPS)")
         return device
-    
+
     # CPU fallback
-    else:
-        device = torch.device("cpu")
-        logger.info(f"Using CPU on {system} system")
-        if system == "Darwin":
-            logger.warning("MPS not available. Ensure PyTorch version supports Apple Silicon.")
-        elif system in ["Windows", "Linux"]:
-            logger.warning("CUDA not available. Install CUDA toolkit for GPU acceleration.")
-        return device
+    device = torch.device("cpu")
+    logger.info(f"Using CPU on {system} system")
+    if system == "Darwin":
+        logger.warning("MPS not available. Ensure PyTorch version supports Apple Silicon.")
+    elif system in ["Windows", "Linux"]:
+        logger.warning("CUDA not available. Install CUDA toolkit for GPU acceleration.")
+    return device
 
 
 def get_device_info():
     """
     Retorna informações detalhadas sobre o dispositivo.
-    
+
     Returns:
         dict: Informações sobre dispositivo, memória e capacidade
     """
@@ -91,7 +100,7 @@ def get_device_info():
         "python_version": platform.python_version(),
         "pytorch_version": torch.__version__,
     }
-    
+
     if device.type == "cuda":
         info.update({
             "cuda_version": torch.version.cuda,
@@ -105,14 +114,14 @@ def get_device_info():
             "mps_available": torch.backends.mps.is_available(),
             "mps_built": torch.backends.mps.is_built(),
         })
-    
+
     return info
 
 
 def set_device_optimization(device):
     """
     Configura otimizações específicas do dispositivo.
-    
+
     Args:
         device: torch.device para otimizar
     """
@@ -123,9 +132,7 @@ def set_device_optimization(device):
         # Habilita TF32 para Ampere GPUs (melhor performance)
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-        # Habilita benchmark para encontrar melhor algoritmo
-        torch.backends.cudnn.benchmark = True
-        logger.info("CUDA optimizations enabled (TF32, cuDNN benchmark)")
+        logger.info("CUDA optimizations enabled (TF32)")
     elif device.type == "mps":
         # MPS ainda é experimental, sem otimizações específicas por enquanto
         logger.info("MPS device set (experimental support)")
@@ -135,18 +142,14 @@ def set_device_optimization(device):
 
 def get_torch_device() -> dict:
     """Retorna o dispositivo PyTorch disponível (CPU, GPU ou TPU)."""
-    if sys.platform == "linux":
-        try:
-            import torch_xla.core.xla_model as xm
-            if xm is not None and len(xm.get_xla_supported_devices()) > 0:
-                return {
-                    'type': 'TPU',
-                    'name': xm.xla_device_kind(),
-                    'device': xm.xla_device()
-                }
-        except ImportError:
-            pass  # Torch_XLA não disponível
-    
+    if _XLA_AVAILABLE and xm is not None:
+        if len(xm.get_xla_supported_devices()) > 0:
+            return {
+                'type': 'TPU',
+                'name': xm.xla_device_kind(),
+                'device': xm.xla_device()
+            }
+
     if torch is not None and torch.cuda.is_available():
         return {
             'type': 'GPU',

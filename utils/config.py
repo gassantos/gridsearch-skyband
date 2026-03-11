@@ -60,13 +60,21 @@ def _build_func(func_name: str):
     def func(self, *args, **kwargs):
         try:
             return getattr(self.config, func_name)(*args, **kwargs)
-        except Exception:
+        except (configparser.NoSectionError, configparser.NoOptionError):
             try:
                 return getattr(self.local_config, func_name)(*args, **kwargs)
-            except Exception:
+            except (configparser.NoSectionError, configparser.NoOptionError):
                 return getattr(self.default_config, func_name)(*args, **kwargs)
 
     return func
+
+
+# Injeta métodos delegadores com fallback em cascata na classe ConfigParser.
+# Executado uma única vez no nível do módulo (ao importar), em vez de a cada
+# chamada de create_config().
+for _func_name in dir(configparser.RawConfigParser):
+    if not _func_name.startswith("_") and _func_name != "read":
+        setattr(ConfigParser, _func_name, _build_func(_func_name))
 
 
 def create_config(path: str) -> ConfigParser:
@@ -80,10 +88,6 @@ def create_config(path: str) -> ConfigParser:
     Returns:
         Instância de :class:`ConfigParser` pronta para uso.
     """
-    for func_name in dir(configparser.RawConfigParser):
-        if not func_name.startswith("_") and func_name != "read":
-            setattr(ConfigParser, func_name, _build_func(func_name))
-
     config = ConfigParser()
     config.read(path)
     return config
