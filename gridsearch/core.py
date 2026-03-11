@@ -43,8 +43,7 @@ _LOGFILE = PathManager.LOGS_DIR / f"grid_search_{_TDATE}.log"
 
 # Detectado de forma lazy para evitar chamar torch.cuda.is_available() no
 # nível do módulo — o que dispara uma mensagem de erro C-level do NVML
-# ("gpuGetDeviceCount failed with code 35") em ambientes CPU-only como
-# o Google Colab sem runtime de GPU.
+# ("gpuGetDeviceCount failed with code 35") em ambientes CPU-only.
 _device_type_cache: "str | None" = None
 
 
