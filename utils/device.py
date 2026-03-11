@@ -9,6 +9,7 @@ import os
 import sys
 import platform
 import logging
+import psutil
 import torch
 
 
@@ -201,3 +202,25 @@ def get_torch_device() -> dict:
             'device': torch.device('cpu')
         }
     return {'type': 'unavailable', 'name': None, 'device': None}
+
+
+def set_cpu_parallelism():
+    """Otimiza o paralelismo para execução em CPU.
+
+    Define ``torch.set_num_threads`` para o número de cores físicos (não lógicos)
+    para evitar overhead de context switch e contenção de cache L3, o que é
+    uma melhor prática para modelos Transformer em CPU.
+    Também habilita o OneDNN (MKL-DNN) para aceleração de kernels.
+    """
+    try:
+        # Núcleos físicos são preferíveis para deep learning (evita hyperthreading noise)
+        phy_cores = psutil.cpu_count(logical=False) or 1
+        torch.set_num_threads(phy_cores)
+
+        # Habilita OneDNN se disponível (aceleração para Intel CPUs)
+        if hasattr(torch.backends, "mkldnn"):
+            torch.backends.mkldnn.enabled = True
+
+        logger.info(f"Otimizações de CPU aplicadas: threads={phy_cores}, oneDNN=True")
+    except Exception as e:
+        logger.warning(f"Não foi possível aplicar otimizações de afinidade de CPU: {e}")

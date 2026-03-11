@@ -2,7 +2,7 @@ import logging
 import torch
 
 from utils.reader import init_dataset, init_formatter, init_test_dataset
-from utils.device import get_device
+from utils.device import get_device, set_cpu_parallelism
 from model import get_model
 from model.optimizer import init_optimizer
 from .output_init import init_output_function
@@ -17,6 +17,8 @@ def init_all(config, gpu_list, checkpoint, mode, *args, **params):
 
     # Device portável (CUDA / MPS / CPU)
     device = get_device()
+    if device.type == "cpu":
+        set_cpu_parallelism()
 
     logger.info("Begin to initialize dataset and formatter..., mode=%s", mode)
     if mode == "train":
@@ -72,6 +74,19 @@ def init_all(config, gpu_list, checkpoint, mode, *args, **params):
                 raise e
             else:
                 logger.warning(information)
+
+    # Otimizações específicas de CPU (Quantização Dinâmica)
+    # Melhora a velocidade de inferência/extração em 2x-4x com impacto mínimo na precisão.
+    if device.type == "cpu" and mode != "train":
+        try:
+            # Quantiza apenas as camadas Lineares (onde o BERT gasta mais tempo)
+            model = torch.quantization.quantize_dynamic(
+                model, {torch.nn.Linear}, dtype=torch.qint8
+            )
+            logger.info("Modelo quantizado dinamicamente para execução em CPU (inferência/extração).")
+        except Exception as e:
+            logger.warning(f"Não foi possível aplicar quantização dinâmica: {e}")
+
 
     result["model"] = model
     if mode == "train":
