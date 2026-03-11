@@ -31,7 +31,7 @@ import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from utils.device import get_torch_device
 from utils.paths import PathManager
-from utils.log_setup import setup_worker_logging, _LOG_QUEUE
+from utils.log_setup import setup_worker_logging, get_log_queue
 from .utils import (
     check_memory_availability,
     filter_grid_config,
@@ -40,7 +40,20 @@ from .utils import (
 
 _TDATE = datetime.now().strftime("%Y-%m-%d")
 _LOGFILE = PathManager.LOGS_DIR / f"grid_search_{_TDATE}.log"
-device_type = get_torch_device()['type']
+
+# Detectado de forma lazy para evitar chamar torch.cuda.is_available() no
+# nível do módulo — o que dispara uma mensagem de erro C-level do NVML
+# ("gpuGetDeviceCount failed with code 35") em ambientes CPU-only como
+# o Google Colab sem runtime de GPU.
+_device_type_cache: "str | None" = None
+
+
+def _get_device_type() -> str:
+    """Retorna o tipo de device (CPU/GPU/TPU), com cache para evitar re-detecção."""
+    global _device_type_cache
+    if _device_type_cache is None:
+        _device_type_cache = get_torch_device()['type']
+    return _device_type_cache
 
 # Logging configurado via setup_main_logging() em run_grid_search().
 # Não chamamos basicConfig aqui para evitar dupla inicialização nos workers.
@@ -50,9 +63,18 @@ logger = logging.getLogger(__name__)
 # Diretórios
 GRID_OUTPUT_DIR = PathManager.EXPERIMENTS_DIR / "grid_search"
 GRID_CONFIGS_DIR = GRID_OUTPUT_DIR / "configs"
-GRID_STATE_FILE = GRID_OUTPUT_DIR / f"grid_search_state_{device_type}_{_TDATE}.json"
-GRID_RESULTS_FILE = GRID_OUTPUT_DIR / f"grid_search_results_{device_type}_{_TDATE}.json"
-GRID_SUMMARY_FILE = GRID_OUTPUT_DIR / f"grid_search_summary_{device_type}_{_TDATE}.txt"
+
+
+def _grid_state_file():
+    return GRID_OUTPUT_DIR / f"grid_search_state_{_get_device_type()}_{_TDATE}.json"
+
+
+def _grid_results_file():
+    return GRID_OUTPUT_DIR / f"grid_search_results_{_get_device_type()}_{_TDATE}.json"
+
+
+def _grid_summary_file():
+    return GRID_OUTPUT_DIR / f"grid_search_summary_{_get_device_type()}_{_TDATE}.txt"
 
 # Configurações de custo
 # Tarifa média de energia em USD/kWh (pode ser configurada via variável de ambiente)
@@ -278,9 +300,9 @@ def run_grid_search(
     completed_experiments = set()
     all_results = []
     
-    if resume and GRID_STATE_FILE.exists():
+    if resume and _grid_state_file().exists():
         logger.info("Retomando execução anterior...")
-        with open(GRID_STATE_FILE, 'r', encoding='utf-8') as f:
+        with open(_grid_state_file(), 'r', encoding='utf-8') as f:
             state = json.load(f)
             completed_experiments = set(state.get("completed_experiments", []))
             all_results = state.get("results", [])
@@ -341,7 +363,7 @@ def run_grid_search(
         with ProcessPoolExecutor(
             max_workers=parallel,
             initializer=setup_worker_logging,
-            initargs=(_LOG_QUEUE,),
+            initargs=(get_log_queue(),),
         ) as executor:
             futures = {
                 executor.submit(run_single_experiment, idx, cfg, params, _gpu_for(idx), parallel): idx
@@ -385,7 +407,7 @@ def save_state(completed_experiments: set, results: List[Dict[str, Any]]):
         "results": results
     }
     
-    with open(GRID_STATE_FILE, 'w', encoding='utf-8') as f:
+    with open(_grid_state_file(), 'w', encoding='utf-8') as f:
         json.dump(state, f, indent=2)
 
 
@@ -713,8 +735,8 @@ Exemplos de uso:
     if args.analyze_only:
         # Tenta encontrar o arquivo de resultados: com data de hoje, sem data, ou o mais recente
         results_file = None
-        if GRID_RESULTS_FILE.exists():
-            results_file = GRID_RESULTS_FILE
+        if _grid_results_file().exists():
+            results_file = _grid_results_file()
         else:
             # Fallback 1: arquivo sem data
             fallback_no_date = GRID_OUTPUT_DIR / "grid_search_results.json"
@@ -741,21 +763,21 @@ Exemplos de uso:
         print("\n" + report)
         
         # Salva com data e também como arquivo canônico sem data
-        with open(GRID_SUMMARY_FILE, 'w', encoding='utf-8') as f:
+        with open(_grid_summary_file(), 'w', encoding='utf-8') as f:
             f.write(report)
         
         canonical_summary = GRID_OUTPUT_DIR / "grid_search_summary.txt"
         with open(canonical_summary, 'w', encoding='utf-8') as f:
             f.write(report)
         
-        logger.info(f"Relatório salvo em: {GRID_SUMMARY_FILE}")
+        logger.info(f"Relatório salvo em: {_grid_summary_file()}")
         logger.info(f"Relatório canônico salvo em: {canonical_summary}")
         return
     
     # Modo: retomar execução
     if args.resume:
-        if not GRID_STATE_FILE.exists():
-            logger.error(f"Arquivo de estado não encontrado: {GRID_STATE_FILE}")
+        if not _grid_state_file().exists():
+            logger.error(f"Arquivo de estado não encontrado: {_grid_state_file()}")
             sys.exit(1)
         
         logger.info("Retomando execução...")
@@ -791,10 +813,10 @@ Exemplos de uso:
         )
         
         # Salva resultados completos
-        with open(GRID_RESULTS_FILE, 'w', encoding='utf-8') as f:
+        with open(_grid_results_file(), 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2)
         
-        logger.info(f"Resultados completos salvos em: {GRID_RESULTS_FILE}")
+        logger.info(f"Resultados completos salvos em: {_grid_results_file()}")
         
         # Analisa e gera relatório
         analysis = analyze_results(results)
@@ -803,14 +825,14 @@ Exemplos de uso:
         print("\n" + report)
         
         # Salva com data e também como arquivo canônico sem data
-        with open(GRID_SUMMARY_FILE, 'w', encoding='utf-8') as f:
+        with open(_grid_summary_file(), 'w', encoding='utf-8') as f:
             f.write(report)
         
         canonical_summary = GRID_OUTPUT_DIR / "grid_search_summary.txt"
         with open(canonical_summary, 'w', encoding='utf-8') as f:
             f.write(report)
         
-        logger.info(f"Relatório salvo em: {GRID_SUMMARY_FILE}")
+        logger.info(f"Relatório salvo em: {_grid_summary_file()}")
         logger.info(f"Relatório canônico salvo em: {canonical_summary}")
 
 

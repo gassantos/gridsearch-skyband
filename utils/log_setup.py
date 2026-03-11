@@ -17,13 +17,13 @@ são silenciados em todos os processos, deixando o log focado no experimento.
 Uso típico::
 
     # Processo principal — uma única chamada
-    from utils.log_setup import setup_main_logging, setup_worker_logging, _LOG_QUEUE
+    from utils.log_setup import setup_main_logging, setup_worker_logging, get_log_queue
 
     listener = setup_main_logging(logfile="logs/experimento.log")
     try:
         with ProcessPoolExecutor(
             initializer=setup_worker_logging,
-            initargs=(_LOG_QUEUE,),
+            initargs=(get_log_queue(),),
         ) as executor:
             ...
     finally:
@@ -72,9 +72,24 @@ _ERROR_ONLY_LOGGERS: tuple[str, ...] = (
 _LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(name)s] - %(message)s"
 _LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-# Fila compartilhada: criada uma única vez no módulo e passada via initargs
-# para cada worker — spawn-safe porque é serializada por valor.
-_LOG_QUEUE: multiprocessing.Queue = multiprocessing.Queue(-1)
+# Fila compartilhada: inicializada de forma lazy pelo processo principal.
+# NÃO criada no nível do módulo para evitar semáforos "leaked" no Google Colab
+# e em ambientes com start_method='spawn' (resource_tracker emite UserWarning
+# sobre semaphore objects quando a fila é instanciada antes do __main__ guard).
+_LOG_QUEUE: "multiprocessing.Queue | None" = None
+
+
+def get_log_queue() -> multiprocessing.Queue:
+    """Retorna (criando se necessário) a fila de log compartilhada.
+
+    Deve ser chamada apenas no processo principal, antes de iniciar workers.
+    Ao passar a fila via ``initargs``, o objeto é serializado por valor para
+    cada worker — spawn-safe e sem criação de semáforos extras.
+    """
+    global _LOG_QUEUE
+    if _LOG_QUEUE is None:
+        _LOG_QUEUE = multiprocessing.Queue(-1)
+    return _LOG_QUEUE
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +151,8 @@ def setup_main_logging(
         ``listener.stop()`` ao encerrar o programa para garantir que todas as
         mensagens pendentes na fila sejam escritas.
     """
+    queue = get_log_queue()
+
     formatter = _make_formatter()
 
     stream_handler = logging.StreamHandler(sys.stdout)
@@ -147,7 +164,7 @@ def setup_main_logging(
     file_handler.setLevel(level)
 
     listener = logging.handlers.QueueListener(
-        _LOG_QUEUE,
+        queue,
         stream_handler,
         file_handler,
         respect_handler_level=True,
@@ -156,11 +173,11 @@ def setup_main_logging(
 
     # Root logger apenas encaminha para a fila; o listener escreve nos handlers
     root = logging.getLogger()
-    # Remove handlers anteriores (evita que basicConfig de bibliotecas externes duplique)
+    # Remove handlers anteriores (evita que basicConfig de bibliotecas externas duplique)
     for h in root.handlers[:]:
         root.removeHandler(h)
     root.setLevel(level)
-    root.addHandler(logging.handlers.QueueHandler(_LOG_QUEUE))
+    root.addHandler(logging.handlers.QueueHandler(queue))
 
     _silence_noisy_loggers()
     return listener
@@ -173,7 +190,7 @@ def setup_worker_logging(queue: multiprocessing.Queue) -> None:
 
         ProcessPoolExecutor(
             initializer=setup_worker_logging,
-            initargs=(_LOG_QUEUE,),
+            initargs=(get_log_queue(),),
         )
 
     O worker **não** abre handlers próprios — apenas envia mensagens para a
@@ -181,8 +198,7 @@ def setup_worker_logging(queue: multiprocessing.Queue) -> None:
     stdout e no arquivo de log.
 
     Args:
-        queue: Fila compartilhada criada pelo processo principal
-            (normalmente ``_LOG_QUEUE`` de :mod:`utils.log_setup`).
+        queue: Fila compartilhada obtida via ``get_log_queue()`` de :mod:`utils.log_setup`.
     """
     root = logging.getLogger()
     for h in root.handlers[:]:

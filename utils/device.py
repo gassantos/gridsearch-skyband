@@ -4,6 +4,8 @@ Suporta CUDA (NVIDIA), TPU (TorchXLA), MPS (Apple Silicon) e CPU.
 """
 from __future__ import annotations
 
+import contextlib
+import os
 import sys
 import platform
 import logging
@@ -11,6 +13,36 @@ import torch
 
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def _suppress_nvml_stderr():
+    """Suprime a mensagem C-level do NVML no stderr durante detecção de GPU.
+
+    Em ambientes CPU-only (ex.: Google Colab sem runtime de GPU), o NVML
+    escreve diretamente no file-descriptor 2 (stderr) a mensagem::
+
+        gpuGetDeviceCount failed with code 35
+
+    Essa mensagem é gerada em nível C, não capturável via ``logging`` do
+    Python. O context manager redireciona o FD-2 para ``/dev/null`` apenas
+    durante a chamada, restaurando-o imediatamente depois.
+
+    Seguro em Linux/macOS. Em Windows não faz nada (NVML geralmente não
+    emite essa mensagem no stderr nessa plataforma).
+    """
+    if sys.platform == "win32":
+        yield
+        return
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    saved_stderr_fd = os.dup(2)
+    try:
+        os.dup2(devnull_fd, 2)
+        yield
+    finally:
+        os.dup2(saved_stderr_fd, 2)
+        os.close(saved_stderr_fd)
+        os.close(devnull_fd)
 
 # ---------------------------------------------------------------------------
 # XLA availability — exposto como atributo de módulo para permitir mocking
@@ -44,7 +76,10 @@ def get_device(prefer_cpu: bool = False):
     system = platform.system()
 
     # Windows/Linux com CUDA
-    if torch.cuda.is_available():
+    with _suppress_nvml_stderr():
+        cuda_available = torch.cuda.is_available()
+
+    if cuda_available:
         device = torch.device("cuda")
         gpu_name = torch.cuda.get_device_name(0)
         gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
@@ -150,12 +185,15 @@ def get_torch_device() -> dict:
                 'device': xm.xla_device()
             }
 
-    if torch is not None and torch.cuda.is_available():
-        return {
-            'type': 'GPU',
-            'name': torch.cuda.get_device_name(0),
-            'device': torch.device('cuda')
-        }
+    if torch is not None:
+        with _suppress_nvml_stderr():
+            cuda_available = torch.cuda.is_available()
+        if cuda_available:
+            return {
+                'type': 'GPU',
+                'name': torch.cuda.get_device_name(0),
+                'device': torch.device('cuda')
+            }
     if torch is not None:
         return {
             'type': 'CPU',
