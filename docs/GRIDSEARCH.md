@@ -168,7 +168,7 @@ O módulo inclui um motor de **Skyband Query** baseado em dominância de Pareto,
 ### Conceitos Fundamentais
 
 | Conceito | Definição |
-|----------|-----------|
+| ---------- | ----------- |
 | **Dominância de Pareto** | `e_i` domina `e_j` se `e_i` é melhor ou igual em todos os critérios **e** estritamente melhor em pelo menos um |
 | **Skyband k=1** | Frente de Pareto pura — pontos não dominados por nenhum outro |
 | **Skyband_k** | Pontos dominados por **menos de k** outros — conjunto maior que a frente de Pareto |
@@ -176,14 +176,14 @@ O módulo inclui um motor de **Skyband Query** baseado em dominância de Pareto,
 
 ### Parâmetros da Linha de Comando
 
-```
+```py
 python -m main [argumentos do grid] [argumentos Skyband]
 ```
 
 #### Argumentos Skyband
 
 | Argumento | Tipo | Padrão | Descrição |
-|-----------|------|--------|-----------|
+| ----------- | ------ | -------- | ----------- |
 | `--skyband` | flag | — | Executa análise Skyband **após** o grid search |
 | `--skyband-only` | flag | — | **Apenas** análise Skyband sem executar novos experimentos |
 | `--skyband-k K` | int | `1` | Ordem do Skyband. `k=1` = Pareto puro; `k=2` inclui segundo nível |
@@ -195,7 +195,7 @@ python -m main [argumentos do grid] [argumentos Skyband]
 
 #### Métricas disponíveis para `--skyband-metrics` (critérios de dominância Skyband)
 
-```
+```md
 train_time_sec    — tempo de treino em segundos
 energy_kwh        — consumo energético em kWh
 total_gflops      — custo computacional do modelo em GFLOPS
@@ -205,7 +205,7 @@ cost_usd          — custo estimado em USD
 
 #### Métricas disponíveis para `--sla-constraint` (filtro de admissibilidade pré-dominância)
 
-```
+```md
 train_time_sec    — tempo de treino em segundos
 energy_kwh        — consumo energético em kWh
 peak_ram_mb       — pico de uso de RAM em MB  ← checagem de execução
@@ -246,7 +246,7 @@ Comportamento prático:
 #### Perfis de SLA Predefinidos (`--sla-profile`)
 
 | Perfil | Constraints | k | Métricas usadas |
-|--------|------------|---|-----------------|
+| -------- | ------------ | --- | ----------------- |
 | `economico` | `cost_usd ≤ 2.0` | 2 | custo, tempo, energia |
 | `sustentavel` | `energy_kwh ≤ 0.05`, `emissions_kg_co2 ≤ 0.01` | 2 | energia, CO₂, custo |
 | `tempo` | `train_time_sec ≤ 3600` | 3 | tempo, energia, custo |
@@ -267,7 +267,7 @@ python -m main --skyband-only
 
 Saída esperada:
 
-```
+```md
 ========================================================================
 RELATÓRIO SKYBAND (k=1)
 ========================================================================
@@ -302,7 +302,7 @@ python -m main --skyband-only --sla-profile balanceado --skyband-compare
 
 Saída esperada (seção de comparação):
 
-```
+```md
 ========================================================================
 SKYBAND vs RANKING ESCALAR
 ========================================================================

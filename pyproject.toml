@@ -1,7 +1,7 @@
 [project]
-name = "experimentobert-pli"
+name = "gridSearch-skyband"
 version = "0.1.0"
-description = "Add your description here"
+description =   "GridSearch-Skyband combina hiperparâmetros em Pipelines ML conforme SLA"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
