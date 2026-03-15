@@ -157,11 +157,24 @@ uv run python -m main --mode grid \
     --grid-config gridsearch/config/grid_search.json \
     --parallel 4
 
+# Busca multiambiente (1080 combinações = hiperparâmetros x ambientes ativos)
+uv run python -m main --mode grid \
+    --grid-config gridsearch/config/grid_search_multienv.json \
+    --parallel 2
+
 # Retomar execução interrompida
 uv run python -m main --mode grid --resume
+
+# Aplicar SLA profile também como pré-filtro de execução
+uv run python -m main --mode grid \
+    --grid-config gridsearch/config/grid_search.json \
+    --parallel 4 \
+    --sla-profile dev
 ```
 
 > **Distribuição de GPUs:** em modo paralelo, o `main.py` distribui os workers em round-robin pelas GPUs disponíveis de forma automática. Para controle explícito, use `run_experiment.py` diretamente.
+> **Pré-filtro SLA:** em modo `grid`, `--sla-profile` e `--sla-constraint` agora também filtram combinações antes da execução quando a constraint é estimável. Hoje isso vale diretamente para `peak_ram_mb` e para `train_time_sec` quando o JSON da grade expõe uma baseline de tempo em `_meta.time_estimation` ou no fallback `_meta.per_experiment_train_time_sec`. No grid multiambiente, a estimativa pode usar o baseline específico de cada ambiente.
+> **Grid multiambiente:** quando `environments.active` está presente no JSON, o grid executa o produto `hyperparameters × environments`, adicionando o campo de ambiente aos parâmetros de cada experimento.
 
 ### Artefatos gerados
 

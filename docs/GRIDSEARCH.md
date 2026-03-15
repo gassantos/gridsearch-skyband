@@ -21,6 +21,11 @@ python -m gridsearch.core --config config/experiments/BertPLI.config \
                           --search-config gridsearch/config/grid_search.json \
                           --parallel 2
 
+# Execução multiambiente (1080 combinações = hiperparâmetros x ambientes)
+python -m gridsearch.core --config config/experiments/BertPLI.config \
+                          --search-config gridsearch/config/grid_search_multienv.json \
+                          --parallel 2
+
 # Retomar execução interrompida
 python -m gridsearch.core --resume --parallel 2
 
@@ -182,8 +187,8 @@ python -m main [argumentos do grid] [argumentos Skyband]
 | `--skyband` | flag | — | Executa análise Skyband **após** o grid search |
 | `--skyband-only` | flag | — | **Apenas** análise Skyband sem executar novos experimentos |
 | `--skyband-k K` | int | `1` | Ordem do Skyband. `k=1` = Pareto puro; `k=2` inclui segundo nível |
-| `--sla-profile PERFIL` | str | — | Perfil predefinido (sobrescreve `--skyband-k`, `--skyband-metrics` e `--sla-constraint`) |
-| `--sla-constraint M=V` | str (repetível) | — | Restrição de SLA no formato `metrica=valor_maximo` |
+| `--sla-profile PERFIL` | str | — | Perfil predefinido. Em `mode=grid`, também ativa pré-filtro de execução quando a constraint é estimável; na análise, sobrescreve `--skyband-k`, `--skyband-metrics` e `--sla-constraint` |
+| `--sla-constraint M=V` | str (repetível) | — | Restrição de SLA no formato `metrica=valor_maximo`; em `mode=grid`, também entra no pré-filtro quando a constraint é estimável |
 | `--skyband-metrics M…` | str+ | todos (5) | Lista de métricas para dominância de Pareto |
 | `--skyband-compare` | flag | — | Exibe comparação Skyband vs ranking escalar (Jaccard + diferenças) |
 | `--skyband-state ARQUIVO` | path | auto-detect | Caminho direto ao JSON de estado; default: arquivo mais recente |
@@ -207,6 +212,36 @@ peak_ram_mb       — pico de uso de RAM em MB  ← checagem de execução
 emissions_kg_co2  — emissões de CO₂ em kg
 cost_usd          — custo estimado em USD
 ```
+
+#### Pré-filtro SLA antes da execução
+
+No fluxo atual, ao rodar `python -m main --mode grid ...`, o sistema tenta eliminar combinações inviáveis antes de criar workers. Isso reduz desperdício de tempo e recursos sem alterar a análise Skyband pós-execução.
+
+Regras vigentes:
+
+- `peak_ram_mb`: avaliado antes da execução via `estimate_memory_requirements(parallel=1, batch_size=...)`
+- `train_time_sec`: avaliado antes da execução quando o JSON da grade expõe uma baseline em `_meta.time_estimation.baseline_train_time_sec` ou no fallback `_meta.per_experiment_train_time_sec`
+- Em grades multiambiente, `train_time_sec` pode usar `environments.details.<env>.estimated_time_hours.per_experiment` como baseline específico do ambiente
+- A estimativa de tempo também pode aplicar fatores por `batch_size`, `optimizer` e `precision` quando definidos em `_meta.time_estimation`
+- `energy_kwh`, `emissions_kg_co2` e `cost_usd`: continuam sendo usados de forma confiável na análise pós-execução, não no pré-filtro
+
+Quando uma constraint não pode ser estimada com segurança, ela é registrada como `non_evaluable_constraints` no estado do grid, mas não elimina combinações.
+
+Para auditoria, o estado também salva:
+
+- `rejected_samples`: amostra de combinações rejeitadas com `grid_experiment_idx`, `metric`, `estimated_value`, `threshold` e `params`
+- `rejected_samples_limit`: limite máximo de amostras persistidas
+- `rejected_samples_truncated`: quantas rejeições ficaram fora da amostra por limite
+
+### Execução Multiambiente
+
+Quando o arquivo de grid contém `environments.active`, a geração da grade passa a considerar o produto cartesiano `hyperparameters × environments`.
+
+Comportamento prático:
+
+- Cada combinação recebe `grid_params.environment` com o alias do ambiente (`local`, `colab`, `gcp`, `aws`, `azure`)
+- O resultado salvo inclui `selected_environment` para rastreabilidade
+- No pré-filtro SLA, a estimativa de `train_time_sec` usa baseline por ambiente quando disponível em `environments.details.<env>.estimated_time_hours.per_experiment`
 
 #### Perfis de SLA Predefinidos (`--sla-profile`)
 
@@ -312,11 +347,22 @@ python -m main \
     --mode grid \
     --grid-config gridsearch/config/grid_search.json \
     --parallel 4 \
-    --skyband \
     --skyband-k 3 \
     --sla-profile sustentavel \
     --skyband-compare
 ```
+
+#### 7. Grid search com pré-filtro SLA de desenvolvimento
+
+```bash
+python -m main \
+    --mode grid \
+    --grid-config gridsearch/config/grid_search.json \
+    --parallel 2 \
+    --sla-profile dev
+```
+
+> Nesse caso, o perfil `dev` tenta rejeitar combinações que excedem o limite de RAM e o baseline de tempo definido no JSON da grade antes mesmo de executar os workers.
 
 #### 7. Grid de teste (8 experimentos) + Skyband k=2 custom
 
