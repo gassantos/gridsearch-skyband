@@ -4,6 +4,23 @@
     "description": "Grid Search Multiambiente — dimensão 'ambiente computacional' acrescida ao espaço de hiperparâmetros para estudo Skyband sob personalização de SLA",
     "author": "Gustavo Alexandre",
     "date": "2026-03-01",
+    "per_experiment_train_time_sec": 1800,
+    "time_estimation": {
+      "baseline_train_time_sec": 1800,
+      "reference_batch_size": 16,
+      "default_precision": "fp16",
+      "optimizer_factors": {
+        "adam": 1.0,
+        "adamw": 1.0,
+        "sgd": 0.9,
+        "bert_adam": 1.08
+      },
+      "precision_factors": {
+        "fp32": 1.15,
+        "fp16": 1.0,
+        "bf16": 0.98
+      }
+    },
     "hypothesis": "Dada uma personalização de SLA, quais são as melhores configurações em domínio multicriterio usando Skyband para propor um Ambiente Computacional adequado de Pipelines de Aprendizado de Máquina via Consultas Skyband",
     "sla_profiles_path": "gridsearch/config/sla_profiles.json",
     "base_config": "config/experiments/BertPLI.config",

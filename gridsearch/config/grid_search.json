@@ -1,4 +1,24 @@
 {
+  "_meta": {
+    "per_experiment_train_time_sec": 1800,
+    "note": "Baseline usada no pré-filtro SLA para train_time_sec. Ajuste conforme hardware e dataset reais.",
+    "time_estimation": {
+      "baseline_train_time_sec": 1800,
+      "reference_batch_size": 16,
+      "default_precision": "fp16",
+      "optimizer_factors": {
+        "adam": 1.0,
+        "adamw": 1.0,
+        "sgd": 0.9,
+        "bert_adam": 1.08
+      },
+      "precision_factors": {
+        "fp32": 1.15,
+        "fp16": 1.0,
+        "bf16": 0.98
+      }
+    }
+  },
   "description": "Configuração completa de Grid Search - BERT-PLI (216 combinações)",
   "experiment_base": "config/experiments/BertPLI.config",
   "output_dir": "output/experiments/grid_search",
