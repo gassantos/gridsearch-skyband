@@ -59,7 +59,7 @@ uv run --group dev pytest tests/test_warmup_scheduler.py::TestSchedulerLRBehavio
 ```
 
 | Arquivo de teste | Cobertura |
-|---|---|
+| --- | --- |
 | `test_optimizer.py` | Tipos e hiperparâmetros de todos os otimizadores (Adam, AdamW, SGD, bert_adam) |
 | `test_warmup_scheduler.py` | Cálculo de steps, comportamento de LR no warmup/decaimento, restauração de estado |
 | `test_checkpoint.py` | Chaves obrigatórias, round-trip do warmup scheduler, `trained_epoch` e `global_step` |
@@ -124,7 +124,7 @@ Para pesquisa e reprodutibilidade, use `main.py` como ponto de entrada único. E
 
 ### Arquitetura de execução
 
-```
+```py
 main.py  ──(mode=single)──→  run_experiment.py  →  tools/train_tool.py
          ──(mode=grid)────→  gridsearch/core.py  →  run_experiment.py
 ```
@@ -181,7 +181,7 @@ uv run python -m main --mode grid \
 Cada experimento produz automaticamente em `output/experiments/metrics/`:
 
 | Artefato | Descrição |
-|---|---|
+| --- | --- |
 | `<nome>_<optimizer>_<lr>_<bs>_<ep>_<timestamp>.json` | Métricas completas do experimento em JSON |
 | `experiment_summary_<YYYYMMDD>.csv` | Agregação diária de todos os experimentos |
 | `EmissionsCO2_<device>_<YYYYMMDD>.csv` | Emissões de CO₂ rastreadas pelo `codecarbon` |
@@ -226,12 +226,12 @@ enable_monitoring = true
 Quando ativado, ao término do experimento:
 
 | Saída | Descrição |
-|-------|-----------|
+| ------- | ----------- |
 | Campo `energy_kwh` no JSON | Energia consumida em kWh |
 | Campo `emissions_kg_co2` no JSON | Emissões estimadas em kg CO₂ |
 | `output/experiments/metrics/EmissionsCO2_<device>_<YYYYMMDD>.csv` | Histórico acumulado de emissões |
 
-**Custo estimado de energia**
+### **Custo estimado de energia**
 
 O custo monetário é calculado com a tarifa padrão de **$0,12 USD/kWh**, configurável via variável de ambiente:
 
@@ -293,7 +293,7 @@ analysis = analyze_results(results)
 ### Espaço de busca
 
 | Hiperparâmetro | Valores (grade completa) |
-|---|---|
+| --- | --- |
 | `learning_rate` | `1e-5`, `2e-5`, `3e-5`, `5e-5` |
 | `batch_size` | `8`, `16`, `32` |
 | `optimizer` | `adam`, `adamw`, `sgd`, `bert_adam` |
@@ -301,9 +301,9 @@ analysis = analyze_results(results)
 | `seed` | `42`, `123`, `456` |
 | **Total** | **432 combinações** |
 
-### Artefatos gerados
+Artefatos gerados
 
-```
+```sh
 output/experiments/grid_search/
 ├── grid_search_results_<data>.json    # Resultados de todos os experimentos
 ├── grid_search_summary_<data>.txt     # Ranking legível das melhores configurações
@@ -320,7 +320,7 @@ uso de RAM (MB) e F1-score de validação.
 
 ## Estrutura do Projeto
 
-```
+```md
 📁 ExperimentoBERT-PLI/
 │
 ├── 📄 main.py                 Orquestrador do experimento
@@ -382,7 +382,7 @@ uso de RAM (MB) e F1-score de validação.
 O projeto garante resultados reproduzíveis por meio da função `set_seed` em [utils/seed.py](utils/seed.py), que cobre todas as fontes de aleatoriedade:
 
 | Camada | Mecanismo |
-|--------|-----------|
+| -------- | ----------- |
 | Python | `random.seed(seed)` |
 | Python hash | `PYTHONHASHSEED=<seed>` |
 | NumPy | `np.random.seed(seed)` |
@@ -409,11 +409,10 @@ ensure_reproducibility(seed=42)
 ### Trade-off: determinismo vs. performance
 
 | Modo | `cudnn.deterministic` | `cudnn.benchmark` | Performance |
-|------|----------------------|-------------------|-------------|
+| ------ | ---------------------- | ------------------- | ------------- |
 | `set_seed(seed, deterministic=True)` *(padrão)* | `True` | `False` | Reduzida |
 | `set_seed(seed, deterministic=False)` | `False` | `True` | Máxima |
 
 > **Nota:** mesmo com `deterministic=True`, operações atômicas em GPU (ex.: `scatter_add`) podem introduzir variação residual em versões mais antigas do CUDA. Para eliminação total, use `ensure_reproducibility()`.
 
 ---
-
