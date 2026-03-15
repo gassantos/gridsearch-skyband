@@ -135,9 +135,13 @@ def filter_grid_config(config: dict) -> dict:
     Returns:
         Dicionário apenas com parâmetros de busca
     """
-    # Se existe campo "hyperparameters", usa ele diretamente
+    # Se existe campo "hyperparameters", filtra metadados
+    # e mantém apenas listas válidas de busca.
     if "hyperparameters" in config:
-        return config["hyperparameters"]
+        return {
+            k: v for k, v in config["hyperparameters"].items()
+            if not str(k).startswith("_") and isinstance(v, list)
+        }
     
     # Caso contrário, filtra metadados do nível raiz
     metadata_fields = {
