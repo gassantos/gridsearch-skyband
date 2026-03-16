@@ -233,6 +233,7 @@ def run_single_experiment(
     params: Dict[str, Any],
     gpu_list: List[int] | None = None,
     parallel_workers: int = 1,
+    dataset_overrides: Dict[str, str] | None = None,
 ) -> Dict[str, Any]:
     """
     Executa um único experimento e retorna os resultados.
@@ -245,18 +246,25 @@ def run_single_experiment(
         parallel_workers: Número de workers paralelos em uso no grid search
             que chamou este experimento (1 = seqüencial). Salvo nos resultados
             para rastreabilidade.
+        dataset_overrides: Chaves da seção ``[data]`` a sobrescrever no config
+            (ex: ``{"hf_dataset_source": "hub", "hf_dataset_id": "nyu-mll/glue"}``).
 
     Returns:
         Dicionário com resultados do experimento
     """
     # Import lazy para evitar inicialização de CUDA no processo principal
     from run_experiment import execute_experiment
-    
+
     logger.info(f"[{experiment_idx}] Iniciando experimento com parâmetros: {params}")
-    
+
     try:
         # Executa experimento nas GPUs designadas
-        execute_experiment(config_path, gpu_list=gpu_list, parallel_workers=parallel_workers)
+        execute_experiment(
+            config_path,
+            gpu_list=gpu_list,
+            parallel_workers=parallel_workers,
+            dataset_overrides=dataset_overrides,
+        )
         
         # Coleta resultados do arquivo JSON mais recente gerado
         metrics_dir = PathManager.BASE_DIR / "output" / "experiments" / "metrics"
@@ -301,6 +309,7 @@ def run_grid_search(
     gpu_ids: List[int] | None = None,
     execution_sla_constraints: Optional[Dict[str, float]] = None,
     train_dataset: str = "train_task2",
+    dataset_overrides: Dict[str, str] | None = None,
 ) -> List[Dict[str, Any]]:
     """
     Executa busca em grade completa.
@@ -321,6 +330,9 @@ def run_grid_search(
         train_dataset: Nome do arquivo de treino sem extensão (ex:
                  ``"train_task2_v2"``). Passado a cada config gerado para
                  o experimento. Padrão: ``"train_task2"``.
+        dataset_overrides: Chaves da seção ``[data]`` a sobrescrever no config
+            (ex: ``{"hf_dataset_source": "hub", "hf_dataset_id": "nyu-mll/glue"}``).
+            Propagado a cada ``run_single_experiment``.
 
     Returns:
         Lista com resultados de todos os experimentos
@@ -423,7 +435,10 @@ def run_grid_search(
             initargs=(get_log_queue(),),
         ) as executor:
             futures = {
-                executor.submit(run_single_experiment, idx, cfg, params, _gpu_for(idx), parallel): idx
+                executor.submit(
+                    run_single_experiment, idx, cfg, params, _gpu_for(idx), parallel,
+                    dataset_overrides,
+                ): idx
                 for idx, cfg, params in pending_experiments
             }
             
@@ -449,10 +464,14 @@ def run_grid_search(
     else:
         logger.info("Executando em modo sequencial | GPUs disponíveis: %s", _available_gpus or "CPU")
         for idx, config_path, params in pending_experiments:
-            result = run_single_experiment(idx, config_path, params, _gpu_for(idx), parallel_workers=parallel)
+            result = run_single_experiment(
+                idx, config_path, params, _gpu_for(idx),
+                parallel_workers=parallel,
+                dataset_overrides=dataset_overrides,
+            )
             all_results.append(result)
             completed_experiments.add(idx)
-            
+
             # Salva estado incremental
             save_state(
                 completed_experiments,

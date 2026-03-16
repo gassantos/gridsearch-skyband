@@ -115,6 +115,7 @@ def execute_experiment(
     gpu_list: list[int] | None = None,
     parallel_workers: int = 1,
     train_file: str | None = None,
+    dataset_overrides: dict | None = None,
 ) -> None:
     """Executa um experimento completo de forma rastreável.
 
@@ -134,6 +135,10 @@ def execute_experiment(
             ``train_file_list`` na seção ``[data]`` do config antes de
             iniciar o treinamento. ``None`` mantém o valor do arquivo
             de configuração original.
+        dataset_overrides: Chaves da seção ``[data]`` a sobrescrever no
+            config (ex: ``{"hf_dataset_source": "hub", "hf_dataset_id":
+            "nyu-mll/glue"}``). Útil para ativar HuggingFaceDataset via
+            CLI sem modificar o arquivo de config.
 
     Side effects:
         - Escreve ``output/experiments/metrics/<nome>_<data>.json``
@@ -148,13 +153,18 @@ def execute_experiment(
     _torch_device_info = get_torch_device()
     device_name = _torch_device_info['name']
 
-    # Se train_file fornecido, cria config temporário com train_file_list sobrescrito
+    # Aplica train_file e/ou dataset_overrides criando um config temporário
     _temp_config_path: str | None = None
-    if train_file is not None:
+    if train_file is not None or dataset_overrides:
         _base_cfg = load_config(config_path)
         if not _base_cfg.has_section("data"):
             _base_cfg.add_section("data")
-        _base_cfg.set("data", "train_file_list", f"{train_file}.json")
+        if train_file is not None:
+            _base_cfg.set("data", "train_file_list", f"{train_file}.json")
+        if dataset_overrides:
+            for key, value in dataset_overrides.items():
+                section = "data"
+                _base_cfg.set(section, key, str(value))
         _fd, _temp_config_path = _tempfile.mkstemp(suffix=".config")
         os.close(_fd)
         with open(_temp_config_path, "w") as _f:

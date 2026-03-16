@@ -82,34 +82,69 @@ def validate_paths(config_path: str, grid_config_path: Optional[str] = None) -> 
     return True
 
 
-def run_single_experiment(config_path: str, train_dataset: str = DEFAULT_TRAIN_DATASET):
+def run_single_experiment(
+    config_path: str,
+    train_dataset: str = DEFAULT_TRAIN_DATASET,
+    dataset_overrides: Optional[Dict[str, str]] = None,
+):
     """
     Executa um único experimento.
-    
+
     Args:
-        config_path: Caminho do arquivo de configuração
+        config_path: Caminho do arquivo de configuração.
         train_dataset: Nome do arquivo de treino sem extensão.
             Padrão: ``DEFAULT_TRAIN_DATASET`` (``"train_task2"``). Outras
             opções: ``"train_task2_v2"``, ``"train_task2_v3"``.
+        dataset_overrides: Chaves da seção ``[data]`` a sobrescrever no
+            config (ex: ``{"hf_dataset_source": "hub", "hf_dataset_id": "nyu-mll/glue"}``).
+            Quando definido, ativa automaticamente HuggingFaceDataset.
     """
     # Import lazy para evitar inicialização de CUDA no processo principal
     from run_experiment import execute_experiment
-    
+
     logger.info("=" * 70)
     logger.info("MODO: Experimento Único")
     logger.info(f"Configuração: {config_path}")
-    logger.info(f"Dataset de treino: {train_dataset}.json")
+    if dataset_overrides:
+        logger.info(f"Dataset HF overrides: {dataset_overrides}")
+    else:
+        logger.info(f"Dataset de treino: {train_dataset}.json")
     logger.info("=" * 70)
-    
+
     if not validate_paths(config_path):
         sys.exit(1)
-    
+
     execute_experiment(
         config_path,
         parallel_workers=1,
         train_file=train_dataset if train_dataset != DEFAULT_TRAIN_DATASET else None,
+        dataset_overrides=dataset_overrides,
     )
     logger.info("Experimento concluído com sucesso!")
+
+
+def _build_dataset_overrides(args) -> Optional[Dict[str, str]]:
+    """Constrói o dict de overrides de [data] a partir dos args CLI HF.
+
+    Retorna ``None`` se nenhum argumento HF foi informado.
+    Quando ``--dataset-source`` é fornecido, ativa automaticamente
+    ``*_dataset_type = HuggingFace`` para train/valid/test.
+    """
+    if not args.dataset_source:
+        return None
+
+    overrides: Dict[str, str] = {
+        "hf_dataset_source": args.dataset_source,
+        "train_dataset_type": "HuggingFace",
+        "valid_dataset_type": "HuggingFace",
+        "test_dataset_type": "HuggingFace",
+    }
+    if args.dataset_id:
+        overrides["hf_dataset_id"] = args.dataset_id
+    if args.dataset_config:
+        overrides["hf_dataset_config"] = args.dataset_config
+
+    return overrides
 
 
 def _parse_sla_constraints(constraint_list: Optional[list]) -> dict:
@@ -314,10 +349,11 @@ def run_grid_search_experiments(
     sla_profile_name: Optional[str] = None,
     sla_constraints: Optional[dict] = None,
     train_dataset: str = DEFAULT_TRAIN_DATASET,
+    dataset_overrides: Optional[Dict[str, str]] = None,
 ):
     """
     Executa grid search de hiperparâmetros.
-    
+
     Args:
         base_config_path: Caminho do arquivo de configuração base
         grid_config_path: Caminho do arquivo JSON com grade de hiperparâmetros
@@ -329,13 +365,18 @@ def run_grid_search_experiments(
         train_dataset: Nome do arquivo de treino sem extensão.
             Padrão: ``DEFAULT_TRAIN_DATASET`` (``"train_task2"``). Outras
             opções: ``"train_task2_v2"``, ``"train_task2_v3"``.
+        dataset_overrides: Chaves da seção ``[data]`` a sobrescrever no
+            config (ex: ``{"hf_dataset_source": "hub", "hf_dataset_id": "nyu-mll/glue"}``).
     """
     logger.info("=" * 70)
     logger.info("MODO: Grid Search")
     logger.info(f"Configuração base: {base_config_path}")
     logger.info(f"Grid config: {grid_config_path}")
     logger.info(f"Execução: {'Paralela (' + str(parallel) + ' workers)' if parallel > 1 else 'Sequencial'}")
-    logger.info(f"Dataset de treino: {train_dataset}.json")
+    if dataset_overrides:
+        logger.info(f"Dataset HF overrides: {dataset_overrides}")
+    else:
+        logger.info(f"Dataset de treino: {train_dataset}.json")
     logger.info("=" * 70)
     
     if not validate_paths(base_config_path, grid_config_path):
@@ -377,6 +418,7 @@ def run_grid_search_experiments(
         parallel=parallel,
         execution_sla_constraints=execution_sla_constraints or None,
         train_dataset=train_dataset,
+        dataset_overrides=dataset_overrides,
     )
     
     logger.info("Grid search concluído com sucesso!")
@@ -608,6 +650,18 @@ Exemplos de uso:
   # Skyband com métricas customizadas (2 critérios: tempo e custo)
   python -m main --skyband-only --skyband-metrics train_time_sec cost_usd
 
+  # Usar dataset público do HuggingFace Hub (glue/mrpc)
+  python -m main --mode single \\
+      --dataset-source hub --dataset-id nyu-mll/glue --dataset-config mrpc
+
+  # Usar dataset local JSONL via HuggingFace Datasets (substitui config)
+  python -m main --mode single \\
+      --dataset-source local_json
+
+  # Grid search com dataset do Hub + SLA
+  python -m main --mode grid --sla-profile dev \\
+      --dataset-source hub --dataset-id nyu-mll/glue --dataset-config mrpc
+
 Perfis de SLA disponíveis (--sla-profile):
   economico    — custo <= $2.00
   sustentavel  — energia <= 0.05 kWh, CO2 <= 0.01 kg
@@ -678,6 +732,49 @@ Configurações padrão:
             f"Arquivo de treino a utilizar (sem extensão). "
             f"Padrão: {DEFAULT_TRAIN_DATASET}. "
             "Opções: train_task2 | train_task2_v2 | train_task2_v3"
+        ),
+    )
+
+    # ── Grupo: dataset HuggingFace ───────────────────────────────────────────
+    hf_group = parser.add_argument_group(
+        "Dataset HuggingFace",
+        "Sobrescreve as chaves [data] do config para usar HuggingFaceDataset.",
+    )
+
+    hf_group.add_argument(
+        "--dataset-source",
+        type=str,
+        choices=["hub", "local_json"],
+        default=None,
+        dest="dataset_source",
+        metavar="FONTE",
+        help=(
+            "Fonte do dataset: 'hub' (HuggingFace Hub) ou 'local_json' (JSONL local). "
+            "Quando informado, ativa automaticamente train/valid/test_dataset_type=HuggingFace."
+        ),
+    )
+
+    hf_group.add_argument(
+        "--dataset-id",
+        type=str,
+        default=None,
+        dest="dataset_id",
+        metavar="ID",
+        help=(
+            "ID do dataset no HuggingFace Hub (ex: 'nyu-mll/glue') ou "
+            "caminho local ao usar --dataset-source local_json."
+        ),
+    )
+
+    hf_group.add_argument(
+        "--dataset-config",
+        type=str,
+        default=None,
+        dest="dataset_config",
+        metavar="CONFIG",
+        help=(
+            "Subconfiguração do dataset no Hub (ex: 'mrpc' para glue). "
+            "Corresponde ao parâmetro 'name' do load_dataset."
         ),
     )
 
@@ -800,7 +897,11 @@ Configurações padrão:
             )
 
         elif args.mode == "single":
-            run_single_experiment(args.config, train_dataset=args.train_dataset)
+            run_single_experiment(
+                args.config,
+                train_dataset=args.train_dataset,
+                dataset_overrides=_build_dataset_overrides(args),
+            )
             if not args.no_skyband:
                 run_skyband_analysis(
                     k=args.skyband_k,
@@ -819,6 +920,7 @@ Configurações padrão:
                 sla_profile_name=args.sla_profile,
                 sla_constraints=sla_dict or None,
                 train_dataset=args.train_dataset,
+                dataset_overrides=_build_dataset_overrides(args),
             )
             if not args.no_skyband:
                 run_skyband_analysis(
