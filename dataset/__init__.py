@@ -13,9 +13,11 @@ Uso::
     DatasetClass = dataset_list[config.get('data', 'dataset_type')]
 """
 from .nlp.JsonFromFiles import JsonFromFilesDataset
+from .nlp.HuggingFace import HuggingFaceDataset
 from .others.FilenameOnly import FilenameOnlyDataset
 
 dataset_list = {
     "JsonFromFiles": JsonFromFilesDataset,
+    "HuggingFace": HuggingFaceDataset,
     "FilenameOnly": FilenameOnlyDataset
 }
