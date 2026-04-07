@@ -19,7 +19,7 @@
       }
     }
   },
-  "description": "Configuração de teste para Grid Search - BERT-PLI (8 experimentos)",
+  "description": "Configuração de teste para Grid Search (8 experimentos)",
   "experiment_base": "config/experiments/BertPLI.config",
   "output_dir": "output/experiments/grid_search",
   "parallel_workers": 2,

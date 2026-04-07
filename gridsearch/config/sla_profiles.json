@@ -31,8 +31,8 @@
   "profiles": {
 
     "economico": {
-      "description": "Perfil para execução com orçamento restrito. Prioriza minimização de custo financeiro direto. Adequado para pesquisadores com crédito limitado em nuvem ou bolsistas com budget controlado.",
-      "context": "Pesquisa acadêmica com crédito de nuvem limitado (ex: $50/mês)",
+      "description": "Perfil para execução com orçamento restrito. Prioriza minimização de custo financeiro direto. Adequado para alunos com crédito limitado em nuvem ou bolsistas com budget controlado.",
+      "context": "Orçamento com crédito de nuvem limitado (ex: $50/mês)",
       "constraints": {
         "cost_usd":          2.00,
         "train_time_sec":    null,
@@ -52,7 +52,7 @@
     },
 
     "sustentavel": {
-      "description": "Perfil green-AI. Prioriza redução de emissões de CO₂ e consumo de energia. Indicado para projetos com compromissos de sustentabilidade ou certificações ambientais.",
+      "description": "Perfil green-AI. Prioriza sustentabilidade com redução de emissões de CO₂ e consumo de energia.",
       "context": "Green-AI / relatório de sustentabilidade institucional",
       "constraints": {
         "cost_usd":          null,
