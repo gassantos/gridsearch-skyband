@@ -1,0 +1,15 @@
+{
+  "_meta": {
+    "description": "Mapeamento de hiperparâmetros do grid search para seções/chaves do ConfigParser.",
+    "format": "param_name → {section, key}. Quando 'key' é omitido, usa o próprio param_name.",
+    "auto_create_section": "Se a seção não existir no config base, será criada automaticamente."
+  },
+  "mapping": {
+    "learning_rate":  { "section": "train",       "key": "learning_rate" },
+    "batch_size":     { "section": "train",       "key": "batch_size" },
+    "optimizer":      { "section": "train",       "key": "optimizer" },
+    "dropout":        { "section": "model",       "key": "dropout" },
+    "seed":           { "section": "experiment",  "key": "seed" },
+    "environment":    { "section": "environment", "key": "runtime_profile" }
+  }
+}

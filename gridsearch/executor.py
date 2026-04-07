@@ -1,0 +1,380 @@
+"""
+Grid Search Executor — Orquestração de execução
+=================================================
+
+Motor de execução do grid search: gerencia estado, paralelismo,
+checkpointing incremental e distribuição de GPUs.
+
+Autor: Gustavo Alexandre
+Data: 2026-02-15
+"""
+
+import json
+import logging
+import os
+import sys
+import traceback
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+from utils.device import get_torch_device
+from utils.paths import PathManager
+from utils.log_setup import setup_worker_logging, get_log_queue
+from .utils import check_memory_availability, ensure_output_directories
+from .grid import generate_parameter_grid, create_config_for_combination
+from .sla_prefilter import prefilter_param_grid_by_execution_sla
+
+logger = logging.getLogger(__name__)
+
+_TDATE = datetime.now().strftime("%Y-%m-%d")
+_LOGFILE = PathManager.LOGS_DIR / f"grid_search_{_TDATE}.log"
+
+# Device cache (lazy, evita NVML em CPU-only)
+_device_type_cache: "str | None" = None
+
+
+def _get_device_type() -> str:
+    """Retorna o tipo de device (CPU/GPU/TPU), com cache para evitar re-detecção."""
+    global _device_type_cache
+    if _device_type_cache is None:
+        _device_type_cache = get_torch_device()['type']
+    return _device_type_cache
+
+
+# ============================================================================
+# DIRETÓRIOS — defaults injetáveis (DIP)
+# ============================================================================
+_DEFAULT_OUTPUT_DIR = PathManager.EXPERIMENTS_DIR / "grid_search"
+
+GRID_OUTPUT_DIR = _DEFAULT_OUTPUT_DIR
+GRID_CONFIGS_DIR = GRID_OUTPUT_DIR / "configs"
+
+# Custo energético (USD/kWh)
+ENERGY_COST_USD_PER_KWH = float(os.getenv("ENERGY_COST_USD_PER_KWH", "0.12"))
+
+# Criar diretórios na importação
+ensure_output_directories()
+
+
+def _resolve_output_dir(output_dir: Path | None = None) -> Path:
+    """Retorna o diretório de saída efetivo, aplicando o default do módulo."""
+    return output_dir if output_dir is not None else _DEFAULT_OUTPUT_DIR
+
+
+def _grid_state_file(output_dir: Path | None = None):
+    base = _resolve_output_dir(output_dir)
+    return base / f"grid_search_state_{_get_device_type()}_{_TDATE}.json"
+
+
+def _grid_results_file(output_dir: Path | None = None):
+    base = _resolve_output_dir(output_dir)
+    return base / f"grid_search_results_{_get_device_type()}_{_TDATE}.json"
+
+
+def _grid_summary_file(output_dir: Path | None = None):
+    base = _resolve_output_dir(output_dir)
+    return base / f"grid_search_summary_{_get_device_type()}_{_TDATE}.txt"
+
+
+# ============================================================================
+# EXECUÇÃO DE EXPERIMENTO ÚNICO
+# ============================================================================
+
+def run_single_experiment(
+    experiment_idx: int,
+    config_path: str,
+    params: Dict[str, Any],
+    gpu_list: List[int] | None = None,
+    parallel_workers: int = 1,
+    dataset_overrides: Dict[str, str] | None = None,
+) -> Dict[str, Any]:
+    """
+    Executa um único experimento e retorna os resultados.
+
+    Args:
+        experiment_idx: Índice do experimento
+        config_path: Caminho do arquivo de configuração
+        params: Parâmetros do experimento
+        gpu_list: GPUs a utilizar (ex: [0] ou [1]). None = detecta automaticamente.
+        parallel_workers: Número de workers paralelos em uso no grid search
+            que chamou este experimento (1 = sequencial). Salvo nos resultados
+            para rastreabilidade.
+        dataset_overrides: Chaves da seção ``[data]`` a sobrescrever no config
+            (ex: ``{"hf_dataset_source": "hub", "hf_dataset_id": "nyu-mll/glue"}``).
+
+    Returns:
+        Dicionário com resultados do experimento
+    """
+    # Import lazy para evitar inicialização de CUDA no processo principal
+    from run_experiment import execute_experiment
+
+    logger.info(f"[{experiment_idx}] Iniciando experimento com parâmetros: {params}")
+
+    try:
+        # Executa experimento nas GPUs designadas
+        execute_experiment(
+            config_path,
+            gpu_list=gpu_list,
+            parallel_workers=parallel_workers,
+            dataset_overrides=dataset_overrides,
+        )
+
+        # Coleta resultados do arquivo JSON mais recente gerado
+        metrics_dir = PathManager.BASE_DIR / "output" / "experiments" / "metrics"
+        json_files = sorted(metrics_dir.glob("*.json"), key=os.path.getmtime)
+
+        if not json_files:
+            raise FileNotFoundError("Nenhum arquivo de resultados encontrado")
+
+        latest_result = json_files[-1]
+        with open(latest_result, 'r') as f:
+            result_data = json.load(f)
+
+        # Adiciona parâmetros ao resultado
+        result_data["grid_params"] = params
+        result_data["grid_experiment_idx"] = experiment_idx
+        result_data["parallel_workers"] = parallel_workers
+        if "environment" in params:
+            result_data["selected_environment"] = params["environment"]
+        result_data["status"] = "success"
+
+        logger.info(f"[{experiment_idx}] Experimento concluído com sucesso")
+        return result_data
+
+    except Exception as e:
+        logger.error(f"[{experiment_idx}] Erro no experimento: {str(e)}")
+        logger.debug(traceback.format_exc())
+
+        return {
+            "grid_experiment_idx": experiment_idx,
+            "grid_params": params,
+            "status": "failed",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+# ============================================================================
+# ORQUESTRAÇÃO DO GRID SEARCH
+# ============================================================================
+
+def run_grid_search(
+    base_config_path: str,
+    grid_config: Dict[str, List[Any]],
+    resume: bool = False,
+    parallel: int = 1,
+    gpu_ids: List[int] | None = None,
+    execution_sla_constraints: Optional[Dict[str, float]] = None,
+    train_dataset: str = "train_task2",
+    dataset_overrides: Dict[str, str] | None = None,
+    output_dir: Path | None = None,
+) -> List[Dict[str, Any]]:
+    """
+    Executa busca em grade completa.
+
+    Args:
+        base_config_path: Caminho da configuração base
+        grid_config: Configuração da grade de hiperparâmetros
+        resume: Se True, retoma execução anterior
+        parallel: Número de processos paralelos (1 = sequencial)
+        gpu_ids: Lista explícita de GPUs disponíveis para distribuição
+                 round-robin entre workers (ex: [0, 1, 2, 3]).
+                 None = detecta automaticamente via torch.cuda.
+        execution_sla_constraints: Constraints de SLA avaliáveis antes de
+             executar o experimento. Atualmente suporta:
+             ``peak_ram_mb`` (estimado por batch_size) e
+             ``train_time_sec`` (apenas quando ``_meta`` fornece
+             ``per_experiment_train_time_sec``).
+        train_dataset: Nome do arquivo de treino sem extensão.
+        dataset_overrides: Chaves da seção ``[data]`` a sobrescrever no config.
+        output_dir: Diretório de saída para estado e resultados (DIP).
+            ``None`` usa o default ``output/experiments/grid_search``.
+
+    Returns:
+        Lista com resultados de todos os experimentos
+    """
+    output_dir = _resolve_output_dir(output_dir)
+
+    # Carrega estado anterior se existir
+    completed_experiments = set()
+    all_results = []
+
+    if resume and _grid_state_file(output_dir).exists():
+        logger.info("Retomando execução anterior...")
+        with open(_grid_state_file(output_dir), 'r', encoding='utf-8') as f:
+            state = json.load(f)
+            completed_experiments = set(state.get("completed_experiments", []))
+            all_results = state.get("results", [])
+        logger.info(f"Encontrados {len(completed_experiments)} experimentos já concluídos")
+
+    # Gera grade de parâmetros (preserva índice original para compatibilidade
+    # com retomada e rastreabilidade dos artefatos).
+    param_grid = generate_parameter_grid(grid_config)
+    indexed_param_grid = list(enumerate(param_grid))
+    original_total_experiments = len(indexed_param_grid)
+
+    # Pré-filtro opcional guiado por SLA antes de disparar workers
+    sla_filter_info = {
+        "enabled": bool(execution_sla_constraints),
+        "constraints": execution_sla_constraints or {},
+        "original_total_experiments": original_total_experiments,
+        "eligible_total_experiments": original_total_experiments,
+        "rejected_total_experiments": 0,
+        "rejected_by_metric": {},
+        "non_evaluable_constraints": [],
+    }
+    if execution_sla_constraints:
+        indexed_param_grid, sla_filter_info = prefilter_param_grid_by_execution_sla(
+            indexed_param_grid=indexed_param_grid,
+            constraints=execution_sla_constraints,
+            grid_config=grid_config,
+        )
+
+    total_experiments = len(indexed_param_grid)
+    eligible_idx = {idx for idx, _ in indexed_param_grid}
+    completed_eligible = completed_experiments.intersection(eligible_idx)
+
+    logger.info(f"Total de experimentos: {total_experiments}")
+    logger.info(f"Já concluídos: {len(completed_eligible)}")
+    logger.info(f"Restantes: {total_experiments - len(completed_eligible)}")
+
+    # Prepara experimentos pendentes
+    pending_experiments = []
+    for idx, params in indexed_param_grid:
+        if idx in completed_experiments:
+            continue
+
+        config_path = create_config_for_combination(base_config_path, params, idx, train_file=train_dataset)
+        pending_experiments.append((idx, config_path, params))
+
+    if not pending_experiments:
+        save_state(
+            completed_experiments,
+            all_results,
+            sla_prefilter_info=sla_filter_info,
+            output_dir=output_dir,
+        )
+        logger.info("Todos os experimentos já foram concluídos!")
+        return all_results
+
+    # Validação de memória antes de executar
+    if parallel > 1:
+        max_batch_size = max([p.get('batch_size', 16) for _, _, p in pending_experiments])
+        is_safe, mem_message = check_memory_availability(parallel, max_batch_size)
+        logger.info(f"\n{mem_message}\n")
+
+        if not is_safe:
+            response = input("Deseja continuar mesmo assim? (s/N): ")
+            if response.lower() != 's':
+                logger.info("Execução cancelada pelo usuário")
+                sys.exit(0)
+
+    # Distribui GPUs entre workers em round-robin (um worker → uma GPU)
+    import torch as _torch
+    _available_gpus: List[int] = (
+        gpu_ids
+        if gpu_ids is not None
+        else list(range(_torch.cuda.device_count()))
+    )
+    def _gpu_for(idx: int) -> List[int] | None:
+        """Retorna [gpu_id] para o worker `idx`, ou None quando não há GPUs."""
+        if not _available_gpus:
+            return None
+        return [_available_gpus[idx % len(_available_gpus)]]
+
+    # Executa experimentos
+    if parallel > 1:
+        logger.info(
+            "Executando em modo paralelo com %d workers | GPUs disponíveis: %s",
+            parallel, _available_gpus or "CPU"
+        )
+        with ProcessPoolExecutor(
+            max_workers=parallel,
+            initializer=setup_worker_logging,
+            initargs=(get_log_queue(),),
+        ) as executor:
+            futures = {
+                executor.submit(
+                    run_single_experiment, idx, cfg, params, _gpu_for(idx), parallel,
+                    dataset_overrides,
+                ): idx
+                for idx, cfg, params in pending_experiments
+            }
+
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    result = future.result()
+                    all_results.append(result)
+                    completed_experiments.add(idx)
+
+                    # Salva estado incremental
+                    save_state(
+                        completed_experiments,
+                        all_results,
+                        sla_prefilter_info=sla_filter_info,
+                        output_dir=output_dir,
+                    )
+
+                    completed_eligible = len(completed_experiments.intersection(eligible_idx))
+                    logger.info(f"Progresso: {completed_eligible}/{total_experiments}")
+
+                except Exception as e:
+                    logger.error(f"Erro ao executar experimento {idx}: {e}")
+    else:
+        logger.info("Executando em modo sequencial | GPUs disponíveis: %s", _available_gpus or "CPU")
+        for idx, config_path, params in pending_experiments:
+            result = run_single_experiment(
+                idx, config_path, params, _gpu_for(idx),
+                parallel_workers=parallel,
+                dataset_overrides=dataset_overrides,
+            )
+            all_results.append(result)
+            completed_experiments.add(idx)
+
+            # Salva estado incremental
+            save_state(
+                completed_experiments,
+                all_results,
+                sla_prefilter_info=sla_filter_info,
+                output_dir=output_dir,
+            )
+
+            completed_eligible = len(completed_experiments.intersection(eligible_idx))
+            logger.info(f"Progresso: {completed_eligible}/{total_experiments}")
+
+    return all_results
+
+
+# ============================================================================
+# PERSISTÊNCIA DE ESTADO
+# ============================================================================
+
+def save_state(
+    completed_experiments: set,
+    results: List[Dict[str, Any]],
+    sla_prefilter_info: Optional[Dict[str, Any]] = None,
+    output_dir: Path | None = None,
+):
+    """Salva estado da execução para permitir retomada.
+
+    Args:
+        completed_experiments: Índices dos experimentos já concluídos.
+        results: Lista de resultados acumulados.
+        sla_prefilter_info: Informações do pré-filtro SLA.
+        output_dir: Diretório de saída (DIP). None = default do módulo.
+    """
+    state = {
+        "timestamp": datetime.now().isoformat(),
+        "completed_experiments": list(completed_experiments),
+        "results": results,
+        "sla_prefilter": sla_prefilter_info or {
+            "enabled": False,
+            "constraints": {},
+        },
+    }
+
+    with open(_grid_state_file(output_dir), 'w', encoding='utf-8') as f:
+        json.dump(state, f, indent=2)

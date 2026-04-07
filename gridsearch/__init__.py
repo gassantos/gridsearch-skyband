@@ -19,46 +19,66 @@ Autor: Gustavo Alexandre
 Data: 2026-02-15
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __author__ = "BERT-PLI Team"
 
-from .core import (
-    run_grid_search,
+# --- grid (geração de combinações) ---
+from .grid import (
     generate_parameter_grid,
     create_config_for_combination,
-    run_single_experiment,
-    analyze_results,
-    generate_summary_report
 )
 
-from .skyband import (
+# --- executor (orquestração) ---
+from .executor import (
+    run_grid_search,
+    run_single_experiment,
+)
+
+# --- reporting (análise + relatórios + CLI) ---
+from .reporting import (
+    analyze_results,
+    generate_summary_report,
+)
+
+# --- dominance (Pareto / Skyband) ---
+from .dominance import (
     sla_filter,
     dominates,
     pareto_front,
     skyband_query,
-    compare_skyband_vs_ranking,
-    plot_pareto_2d,
-    skyband_report,
     DEFAULT_METRICS,
     DEFAULT_MINIMIZE,
 )
 
+# --- comparison ---
+from .comparison import compare_skyband_vs_ranking
+
+# --- visualization ---
+from .visualization import (
+    plot_pareto_2d,
+    skyband_report,
+)
+
 __all__ = [
-    # --- core ---
-    'run_grid_search',
+    # --- grid ---
     'generate_parameter_grid',
     'create_config_for_combination',
+    # --- executor ---
+    'run_grid_search',
     'run_single_experiment',
+    # --- reporting ---
     'analyze_results',
     'generate_summary_report',
-    # --- skyband ---
+    # --- dominance ---
     'sla_filter',
     'dominates',
     'pareto_front',
     'skyband_query',
-    'compare_skyband_vs_ranking',
-    'plot_pareto_2d',
-    'skyband_report',
     'DEFAULT_METRICS',
     'DEFAULT_MINIMIZE',
+    # --- comparison ---
+    'compare_skyband_vs_ranking',
+    # --- visualization ---
+    'plot_pareto_2d',
+    'skyband_report',
 ]

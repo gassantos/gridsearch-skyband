@@ -1,0 +1,14 @@
+{
+  "_meta": {
+    "description": "Métricas padrão para dominância Skyband e minimização.",
+    "format": "Cada entrada em 'defaults' é um objeto {name, minimize}.",
+    "extensibility": "Adicione novas métricas ou conjuntos customizados sem alterar código."
+  },
+  "defaults": [
+    { "name": "train_time_sec",    "minimize": true },
+    { "name": "energy_kwh",        "minimize": true },
+    { "name": "total_gflops",      "minimize": true },
+    { "name": "emissions_kg_co2",  "minimize": true },
+    { "name": "cost_usd",          "minimize": true }
+  ]
+}
