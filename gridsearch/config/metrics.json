@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "description": "Métricas padrão para dominância Skyband e minimização.",
-    "format": "Cada entrada em 'defaults' é um objeto {name, minimize}.",
+    "description": "Métricas padrão para dominância Skyband, minimização e análise de recursos.",
+    "format": "Cada entrada em 'defaults' é um objeto {name, minimize}. Cada entrada em 'resource_metrics' é {key, label?}.",
     "extensibility": "Adicione novas métricas ou conjuntos customizados sem alterar código."
   },
   "defaults": [
@@ -10,5 +10,12 @@
     { "name": "total_gflops",      "minimize": true },
     { "name": "emissions_kg_co2",  "minimize": true },
     { "name": "cost_usd",          "minimize": true }
+  ],
+  "resource_metrics": [
+    { "key": "train_time_sec",    "label": "train_time" },
+    { "key": "energy_kwh" },
+    { "key": "peak_ram_mb" },
+    { "key": "emissions_kg_co2" },
+    { "key": "cost_usd" }
   ]
 }
