@@ -122,82 +122,15 @@ def estimate_execution_time(
 
 
 def filter_grid_config(config: dict) -> dict:
-    """
-    Filtra configuração de grid search removendo campos de metadados.
-    
-    Suporta dois formatos:
-    1. Hiperparâmetros em campo "hyperparameters": {"hyperparameters": {"lr": [...]}}
-    2. Hiperparâmetros no nível raiz: {"lr": [...], "batch": [...]}
-    
-    Args:
-        config: Dicionário de configuração completo
-        
-    Returns:
-        Dicionário apenas com parâmetros de busca
-    """
-    # Se existe campo "hyperparameters", filtra metadados
-    # e mantém apenas listas válidas de busca.
-    if "hyperparameters" in config:
-        return {
-            k: v for k, v in config["hyperparameters"].items()
-            if not str(k).startswith("_") and isinstance(v, list)
-        }
-    
-    # Caso contrário, filtra metadados do nível raiz
-    metadata_fields = {
-        "description",
-        "experiment_base",
-        "output_dir",
-        "parallel_workers",
-        "notes",
-        "recommendations"
-    }
-    
-    # Remove metadados e mantém apenas listas (hiperparâmetros válidos)
-    filtered = {
-        k: v for k, v in config.items()
-        if k not in metadata_fields and isinstance(v, list)
-    }
-    
-    return filtered
+    """Compatibilidade retroativa — delegada para ``gridsearch.grid``."""
+    from .grid import filter_grid_config as _impl
+    return _impl(config)
 
 
 def validate_grid_config(config: dict) -> Tuple[bool, str]:
-    """
-    Valida configuração de grid search.
-    
-    Args:
-        config: Dicionário de configuração
-        
-    Returns:
-        Tupla (is_valid, message)
-    """
-    filtered = filter_grid_config(config)
-    
-    if not filtered:
-        return False, "Nenhum parâmetro de busca encontrado na configuração"
-    
-    # Verifica se todos os valores são listas
-    for key, value in filtered.items():
-        if not isinstance(value, list):
-            return False, f"Parâmetro '{key}' deve ser uma lista de valores"
-        
-        if len(value) == 0:
-            return False, f"Parâmetro '{key}' não pode ter lista vazia"
-    
-    # Calcula total de experimentos
-    total = 1
-    for value in filtered.values():
-        total *= len(value)
-    
-    if total > 1000:
-        message = (
-            f"⚠️  AVISO: Grid search gerará {total} experimentos.\n"
-            f"  Isso pode levar muito tempo. Considere reduzir o espaço de busca."
-        )
-        logger.warning(message)
-    
-    return True, f"Configuração válida: {total} experimentos serão gerados"
+    """Compatibilidade retroativa — delegada para ``gridsearch.grid``."""
+    from .grid import validate_grid_config as _impl
+    return _impl(config)
 
 
 def create_experiment_name(params: dict, idx: int, base_name: str = "grid") -> str:

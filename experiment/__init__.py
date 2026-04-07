@@ -2,9 +2,10 @@
 Experiment — Pacote de execução de experimentos (Facade)
 =========================================================
 
-Re-exporta ``execute_experiment`` para manter compatibilidade
-com ``from run_experiment import execute_experiment`` via a
-facade ``run_experiment.py`` na raiz.
+Pacote canônico para execução de experimentos BERT-PLI.
+Uso: ``from experiment import execute_experiment``
+
+CLI standalone: ``python -m experiment <config_path> [gpu_id ...]``
 
 Submódulos:
     - ``runner``      — Motor de execução (orquestrador)

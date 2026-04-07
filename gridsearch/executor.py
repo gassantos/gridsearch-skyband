@@ -108,7 +108,7 @@ def run_single_experiment(
         Dicionário com resultados do experimento
     """
     # Import lazy para evitar inicialização de CUDA no processo principal
-    from run_experiment import execute_experiment
+    from experiment import execute_experiment
 
     logger.info(f"[{experiment_idx}] Iniciando experimento com parâmetros: {params}")
 

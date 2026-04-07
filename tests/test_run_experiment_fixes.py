@@ -1,5 +1,5 @@
 """
-Testes unitários para verificar correções no run_experiment.py.
+Testes unitários para verificar correções no pacote experiment/.
 
 Coberturas:
   - get_torch_device() retorna dict com chave 'name' (não tupla)

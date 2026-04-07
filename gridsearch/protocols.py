@@ -3,7 +3,7 @@ Protocolos de domínio — Contratos estruturais (DIP)
 ====================================================
 
 Define ``typing.Protocol`` para as dependências externas consumidas
-pelo pipeline de execução (``run_experiment.py``).  Permite injetar
+pelo pipeline de execução (``experiment/``).  Permite injetar
 implementações alternativas (mocks, stubs, adaptadores) sem modificar
 os módulos concretos em ``tools/``.
 

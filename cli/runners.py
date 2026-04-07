@@ -66,7 +66,7 @@ def run_single_experiment(
         dataset_overrides: Chaves da seção ``[data]`` a sobrescrever no config.
     """
     # Import lazy para evitar inicialização de CUDA no processo principal
-    from run_experiment import execute_experiment
+    from experiment import execute_experiment
 
     logger.info("=" * 70)
     logger.info("MODO: Experimento Único")
