@@ -2,7 +2,7 @@
 Command Pattern — Despacho de modos de execução
 =================================================
 
-Classes de comando para o BERT-PLI Experiment Runner (Command Pattern).
+Classes de comando para o Gridsearch Experiment Runner (Command Pattern).
 
 Autor: Gustavo Alexandre
 """

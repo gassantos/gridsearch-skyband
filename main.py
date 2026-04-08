@@ -1,5 +1,5 @@
 """
-Main Entry Point - BERT-PLI Experiment Runner
+Main Entry Point - Gridsearch Experiment Runner
 ==============================================
 
 Ponto de entrada fino que delega toda a lógica ao pacote ``cli/``.
@@ -48,7 +48,7 @@ def main():
 
     # Print informações iniciais
     logger.info("=" * 70)
-    logger.info("BERT-PLI Experiment Runner")
+    logger.info("Gridsearch Experiment Runner")
     logger.info("=" * 70)
     logger.info(f"Diretório base: {PathManager.BASE_DIR}")
     logger.info("")

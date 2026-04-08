@@ -2,7 +2,7 @@
 Constantes de configuração padrão do CLI
 =========================================
 
-Valores default para argumentos CLI do BERT-PLI Experiment Runner.
+Valores default para argumentos CLI do Gridsearch Experiment Runner.
 
 Autor: Gustavo Alexandre
 """

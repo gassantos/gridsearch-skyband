@@ -1,5 +1,5 @@
 """
-Construtor do argparse para BERT-PLI Experiment Runner
+Construtor do argparse para Gridsearch Experiment Runner
 =======================================================
 
 Centraliza a definição de todos os argumentos CLI em uma função
@@ -23,7 +23,7 @@ from .constants import (
 def build_argument_parser() -> argparse.ArgumentParser:
     """Constrói e retorna o ``ArgumentParser`` completo do CLI."""
     parser = argparse.ArgumentParser(
-        description="BERT-PLI Experiment Runner - Execução centralizada de experimentos",
+        description="Gridsearch Experiment Runner - Execução centralizada de experimentos",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""
 Exemplos de uso:

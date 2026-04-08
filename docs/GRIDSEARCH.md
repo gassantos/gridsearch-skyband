@@ -1,4 +1,4 @@
-# Grid Search Module - BERT-PLI
+# Grid Search Module for Experiment
 
 Módulo Python profissional para execução de busca em grade de hiperparâmetros.
 

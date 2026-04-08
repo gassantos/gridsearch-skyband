@@ -320,7 +320,7 @@ uso de RAM (MB) e F1-score de validação.
 ## Estrutura do Projeto
 
 ```md
-📁 ExperimentoBERT-PLI/
+📁 Gridsearch-Skyband/
 │
 ├── 📄 main.py                 Orquestrador do experimento
 ├── 📄 pyproject.toml          Dependências e entrypoints
