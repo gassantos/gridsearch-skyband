@@ -34,6 +34,10 @@ Exemplos de uso:
   # Experimento único (Skyband também roda ao final por padrão)
   python -m main --mode single
 
+  # Experimento único com seleção explícita de GPU
+  python -m main --mode single --gpu 0
+  python -m main --mode single --gpu 0 1
+
   # Grid search com configuração específica
   python -m main --mode grid --grid-config gridsearch/config/grid_search_test.json
 
@@ -140,6 +144,19 @@ Configurações padrão:
         "--resume",
         action="store_true",
         help="Retoma execução anterior de grid search usando estado salvo"
+    )
+
+    parser.add_argument(
+        "--gpu",
+        type=int,
+        nargs="*",
+        default=None,
+        metavar="ID",
+        help=(
+            "IDs das GPUs a utilizar. "
+            "Sem valor = detecção automática. "
+            "Ex: --gpu 0  (single GPU), --gpu 0 1  (multi-GPU)"
+        ),
     )
 
     parser.add_argument(

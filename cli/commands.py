@@ -48,6 +48,7 @@ class SingleCommand(Command):
             args.config,
             train_dataset=args.train_dataset,
             dataset_overrides=_build_dataset_overrides(args),
+            gpu_list=args.gpu,
         )
         if not args.no_skyband:
             run_skyband_analysis(
@@ -73,6 +74,7 @@ class GridCommand(Command):
             sla_constraints=sla_dict or None,
             train_dataset=args.train_dataset,
             dataset_overrides=_build_dataset_overrides(args),
+            gpu_ids=args.gpu,
         )
         if not args.no_skyband:
             run_skyband_analysis(

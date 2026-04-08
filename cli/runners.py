@@ -56,6 +56,7 @@ def run_single_experiment(
     config_path: str,
     train_dataset: str = DEFAULT_TRAIN_DATASET,
     dataset_overrides: Optional[Dict[str, str]] = None,
+    gpu_list: Optional[List[int]] = None,
 ):
     """
     Executa um único experimento.
@@ -64,6 +65,7 @@ def run_single_experiment(
         config_path: Caminho do arquivo de configuração.
         train_dataset: Nome do arquivo de treino sem extensão.
         dataset_overrides: Chaves da seção ``[data]`` a sobrescrever no config.
+        gpu_list: IDs das GPUs a utilizar (None = detecção automática).
     """
     # Import lazy para evitar inicialização de CUDA no processo principal
     from experiment import execute_experiment
@@ -75,6 +77,8 @@ def run_single_experiment(
         logger.info(f"Dataset HF overrides: {dataset_overrides}")
     else:
         logger.info(f"Dataset de treino: {train_dataset}.json")
+    if gpu_list is not None:
+        logger.info(f"GPUs: {gpu_list}")
     logger.info("=" * 70)
 
     if not validate_paths(config_path):
@@ -82,6 +86,7 @@ def run_single_experiment(
 
     execute_experiment(
         config_path,
+        gpu_list=gpu_list,
         parallel_workers=1,
         train_file=train_dataset if train_dataset != DEFAULT_TRAIN_DATASET else None,
         dataset_overrides=dataset_overrides,
@@ -303,6 +308,7 @@ def run_grid_search_experiments(
     sla_constraints: Optional[dict] = None,
     train_dataset: str = DEFAULT_TRAIN_DATASET,
     dataset_overrides: Optional[Dict[str, str]] = None,
+    gpu_ids: Optional[List[int]] = None,
 ):
     """
     Executa grid search de hiperparâmetros.
@@ -316,6 +322,7 @@ def run_grid_search_experiments(
         sla_constraints: Constraints SLA manuais para pré-filtro.
         train_dataset: Nome do arquivo de treino sem extensão.
         dataset_overrides: Chaves da seção ``[data]`` a sobrescrever.
+        gpu_ids: IDs das GPUs para distribuição round-robin (None = auto).
     """
     from .sla_summary import _load_latest_grid_state, _emit_sla_execution_summary
 
@@ -367,6 +374,7 @@ def run_grid_search_experiments(
         grid_config=grid_config,
         resume=resume,
         parallel=parallel,
+        gpu_ids=gpu_ids,
         execution_sla_constraints=execution_sla_constraints or None,
         train_dataset=train_dataset,
         dataset_overrides=dataset_overrides,
