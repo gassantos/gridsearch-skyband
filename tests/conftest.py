@@ -1,8 +1,7 @@
 """
-Fixtures compartilhadas para os testes unitários do projeto ExperimentoBERT-PLI.
+Fixtures compartilhadas para os testes unitários do projeto Gridsearch.
 """
 import pytest
-import torch
 import torch.nn as nn
 from unittest.mock import MagicMock
 

@@ -1,5 +1,5 @@
 [project]
-name = "gridSearch-skyband"
+name = "gridsearch-skyband"
 version = "0.1.0"
 description =   "GridSearch-Skyband combina hiperparâmetros em Pipelines ML conforme SLA"
 readme = "README.md"
