@@ -138,10 +138,9 @@ uv run python -m main --mode single
 # Com configuração específica
 uv run python -m main --mode single --config config/experiments/BertPLI2.config
 
-# Diretamente pelo motor (com seleção de GPU)
-uv run python -m experiment config/experiments/BertPLI.config        # GPU auto
-uv run python -m experiment config/experiments/BertPLI.config 0      # GPU 0
-uv run python -m experiment config/experiments/BertPLI.config 0 1    # GPU 0+1
+# Com seleção explícita de GPU
+uv run python -m main --mode single --gpu 0          # GPU 0
+uv run python -m main --mode single --gpu 0 1        # GPU 0+1
 ```
 
 ### Grid search de hiperparâmetros
@@ -172,7 +171,7 @@ uv run python -m main --mode grid \
     --sla-profile dev
 ```
 
-> **Distribuição de GPUs:** em modo paralelo, o `main.py` distribui os workers em round-robin pelas GPUs disponíveis de forma automática. Para controle explícito, use `python -m experiment` diretamente.
+> **Distribuição de GPUs:** em modo paralelo, o `main.py` distribui os workers em round-robin pelas GPUs disponíveis de forma automática. Para controle explícito, use `--gpu 0 1`.
 > **Pré-filtro SLA:** em modo `grid`, `--sla-profile` e `--sla-constraint` agora também filtram combinações antes da execução quando a constraint é estimável. Hoje isso vale diretamente para `peak_ram_mb` e para `train_time_sec` quando o JSON da grade expõe uma baseline de tempo em `_meta.time_estimation` ou no fallback `_meta.per_experiment_train_time_sec`. No grid multiambiente, a estimativa pode usar o baseline específico de cada ambiente.
 > **Grid multiambiente:** quando `environments.active` está presente no JSON, o grid executa o produto `hyperparameters × environments`, adicionando o campo de ambiente aos parâmetros de cada experimento.
 
@@ -236,7 +235,7 @@ Quando ativado, ao término do experimento:
 O custo monetário é calculado com a tarifa padrão de **$0,12 USD/kWh**, configurável via variável de ambiente:
 
 ```bash
-ENERGY_COST_USD_PER_KWH=0.08 uv run python -m experiment config/experiments/BertPLI.config
+ENERGY_COST_USD_PER_KWH=0.08 uv run python -m main --mode single
 ```
 
 > A variável `ENERGY_COST_USD_PER_KWH` aceita qualquer valor em ponto flutuante (USD por kWh).
