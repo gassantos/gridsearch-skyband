@@ -13,35 +13,31 @@ Seção 3.2 do artigo PSLA4ML:
 Cada ponto retornado por ``skyband_query`` tem suas métricas convertidas
 em intervalos do tipo ``"< 5000"`` ou ``"≥ 5000"`` (cf. Tabela 3 do artigo).
 
+Também implementa os passos 4–10 do Algoritmo 1 (PSLA4ML completo) via
+``generate_psla4ml()``, que retorna uma lista de objetos ``Tier``.
+
 Exemplo de uso::
 
-    from gridsearch.tiers import discretize_metrics
+    from gridsearch.tiers import generate_psla4ml
 
-    # Todos os traces do grid search
     all_traces = state["results"]
 
-    # Skyband de ordem k=2
-    from gridsearch.dominance import skyband_query
-    sb = skyband_query(all_traces, k=2)
-
-    # Discretiza as métricas dos pontos do Skyband usando a mediana
-    # do conjunto completo como limiar
-    tiers = discretize_metrics(
-        results=sb,
+    tiers = generate_psla4ml(
+        results=all_traces,
+        k=2,
         metrics=["train_time_sec", "energy_kwh", "emissions_kg_co2", "cost_usd"],
-        reference_results=all_traces,
-        strategy="median",
     )
 
     for tier in tiers:
-        print(tier["discretized"])
-        # {"train_time_sec": "< 5000", "energy_kwh": "< 0.2", ...}
+        print(tier.hardware, tier.discretized)
+        # GPU  {"train_time_sec": "< 5000", "cost_usd": "≥ 1.2", ...}
 
 Autor: Gustavo Alexandre
 """
 
 import logging
 import statistics
+from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional
 
 from .dominance import DEFAULT_METRICS, _extract_metric_value
@@ -265,3 +261,267 @@ def discretize_metrics(
         {m: _format_threshold(v) for m, v in computed.items()},
     )
     return discretized
+
+
+# ============================================================================
+# ENTIDADE TIER — Representa um nível de serviço do PSLA4ML
+# ============================================================================
+
+@dataclass
+class Tier:
+    """Representa um nível de serviço (tier) do PSLA4ML.
+
+    Cada instância corresponde a uma configuração identificada pela consulta
+    k-Skyband que oferece um compromisso distinto entre as métricas
+    consideradas (cf. Seção 3.1 do artigo).
+
+    Os atributos de configuração identificam o workflow (arquitetura + dados
+    + hiperparâmetros livres), enquanto os campos ``_bin`` expressam os
+    intervalos discretizados das métricas (Passo 9 do Algoritmo 1).
+
+    Attributes:
+        model: Arquitetura do modelo (componente ``A`` do TrainingTemplate).
+        dataset: Identificador do dataset de treino (componente ``D``).
+        learning_rate: Taxa de aprendizado usada no experimento.
+        batch_size: Tamanho do batch.
+        optimizer: Otimizador utilizado.
+        dropout: Taxa de dropout (parte dos hiperparâmetros estruturais ``H``).
+        hardware: Tipo de hardware (``"cpu"``, ``"gpu"`` ou ``"tpu"``).
+        discretized: Intervalos discretizados das métricas, ex.:
+            ``{"train_time_sec": "< 5000", "cost_usd": "≥ 1.2"}``.
+        raw_metrics: Valores contínuos originais das métricas do trace.
+        domination_count: Número de pontos que dominam este tier no espaço
+            multicritério (0 = frente de Pareto).
+        k: Ordem do Skyband usado para selecionar este tier.
+        experiment_id: UUID do experimento de origem (quando disponível).
+        grid_experiment_idx: Índice na grade de hiperparâmetros.
+        selected_environment: Nome do ambiente de nuvem (ex.: ``"gcp"``).
+    """
+
+    # — Identificação do workflow —
+    model: str = ""
+    dataset: str = ""
+    learning_rate: Optional[float] = None
+    batch_size: Optional[int] = None
+    optimizer: Optional[str] = None
+    dropout: Optional[float] = None
+    hardware: str = ""
+
+    # — Métricas discretizadas (Passo 9) —
+    discretized: Dict[str, str] = field(default_factory=dict)
+
+    # — Valores brutos de referência —
+    raw_metrics: Dict[str, float] = field(default_factory=dict)
+
+    # — Metadados Skyband —
+    domination_count: int = 0
+    k: int = 1
+
+    # — Rastreabilidade —
+    experiment_id: Optional[str] = None
+    grid_experiment_idx: Optional[int] = None
+    selected_environment: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializa o Tier para dicionário JSON-compatível."""
+        return asdict(self)
+
+
+# ============================================================================
+# HELPERS DE EXTRAÇÃO — lêem campos dos dicts de resultado do grid search
+# ============================================================================
+
+def _extract_hardware(result: Dict[str, Any]) -> str:
+    """Extrai o tipo de hardware do resultado.
+
+    Hierarquia de busca:
+    1. ``result["environment"]["device_type"]`` (produção, via ``build_result_dict``)
+    2. ``result["selected_environment"]`` (nome do ambiente do multienv grid)
+    3. ``result["grid_params"]["environment"]`` (chave adicionada pelo ``generate_parameter_grid``)
+    4. String vazia como fallback.
+    """
+    env = result.get("environment", {})
+    if isinstance(env, dict) and env.get("device_type"):
+        return str(env["device_type"]).lower()
+    se = result.get("selected_environment")
+    if se:
+        return str(se).lower()
+    gp = result.get("grid_params", {})
+    if isinstance(gp, dict) and gp.get("environment"):
+        return str(gp["environment"]).lower()
+    return ""
+
+
+def _extract_hyperparam(result: Dict[str, Any], key: str, aliases: List[str]) -> Any:
+    """Extrai um hiperparâmetro de um resultado, tentando múltiplos caminhos.
+
+    Busca em:
+    1. ``result["hyperparameters"][key]`` (resultado de produção)
+    2. ``result["grid_params"][alias]`` para cada alias
+    3. Raiz do dicionário com o próprio key e aliases
+    """
+    hp = result.get("hyperparameters", {})
+    if isinstance(hp, dict):
+        for k in [key] + aliases:
+            if k in hp:
+                return hp[k]
+    gp = result.get("grid_params", {})
+    if isinstance(gp, dict):
+        for k in [key] + aliases:
+            if k in gp:
+                return gp[k]
+    for k in [key] + aliases:
+        if k in result:
+            return result[k]
+    return None
+
+
+def _extract_raw_metrics(result: Dict[str, Any], metrics: List[str]) -> Dict[str, float]:
+    """Extrai os valores brutos das métricas de um resultado."""
+    return {
+        m: v
+        for m in metrics
+        if (v := _extract_metric_value(result, m)) != float("inf")
+    }
+
+
+def _build_tier(
+    result: Dict[str, Any],
+    k: int,
+    model: str,
+    dataset: str,
+    metrics: List[str],
+) -> "Tier":
+    """Constrói um Tier a partir de um resultado enriquecido com 'discretized'."""
+    lr_raw = _extract_hyperparam(result, "learning_rate", ["lr"])
+    bs_raw = _extract_hyperparam(result, "batch_size", ["bs", "batch"])
+    opt_raw = _extract_hyperparam(result, "optimizer", ["opt"])
+    do_raw = _extract_hyperparam(result, "dropout", ["do"])
+
+    lr = float(lr_raw) if lr_raw is not None else None
+    bs = int(bs_raw) if bs_raw is not None else None
+    opt = str(opt_raw) if opt_raw is not None else None
+    dropout = float(do_raw) if do_raw is not None else None
+
+    exp_block = result.get("experiment", {})
+    exp_id = exp_block.get("id") if isinstance(exp_block, dict) else None
+
+    return Tier(
+        model=model,
+        dataset=dataset,
+        learning_rate=lr,
+        batch_size=bs,
+        optimizer=opt,
+        dropout=dropout,
+        hardware=_extract_hardware(result),
+        discretized=dict(result.get("discretized", {})),
+        raw_metrics=_extract_raw_metrics(result, metrics),
+        domination_count=int(result.get("domination_count", 0)),
+        k=k,
+        experiment_id=exp_id,
+        grid_experiment_idx=result.get("grid_experiment_idx"),
+        selected_environment=result.get("selected_environment"),
+    )
+
+
+# ============================================================================
+# GENERATE_PSLA4ML — Algoritmo 1 completo (passos 4–10)
+# ============================================================================
+
+def generate_psla4ml(
+    results: List[Dict[str, Any]],
+    k: int = 1,
+    metrics: Optional[List[str]] = None,
+    thresholds: Optional[Dict[str, float]] = None,
+    strategy: str = "median",
+    sla_constraints: Optional[Dict[str, float]] = None,
+    model: str = "BERT-PLI",
+    dataset: str = "COLLIE",
+) -> List["Tier"]:
+    """Gera os tiers do PSLA4ML executando o Algoritmo 1 do artigo.
+
+    Implementa os passos 4–10 do Algoritmo 1 (Seção 3.2):
+
+    .. code-block:: text
+
+        4: S ← Skyband_k(P)
+        5: para cada configuração p em S faça
+        6:   Criar tier R
+        7:   Adicionar R ao conjunto T
+        8: fim para
+        9: Discretizar métricas contínuas em T
+       10: retorne T
+
+    Os passos 1–3 (extração de traces do banco de proveniência e cálculo de
+    métricas derivadas) são responsabilidade do chamador.
+
+    Args:
+        results: Conjunto de traces ``P`` — tipicamente todos os resultados
+            do grid search carregados do arquivo de estado.
+        k: Ordem do Skyband (``k=1`` equivale à frente de Pareto).
+        metrics: Métricas usadas para dominância e discretização.
+            Padrão: ``DEFAULT_METRICS`` (5 métricas de recurso).
+        thresholds: Limiares explícitos ``{métrica: valor}`` para a
+            discretização.  Quando ``None``, os limiares são calculados
+            como a mediana do conjunto ``results`` (mesma estratégia
+            usada no artigo).
+        strategy: Estratégia de cálculo automático dos limiares:
+            ``"median"`` (padrão), ``"mean"``, ``"q1"``, ``"q3"``.
+        sla_constraints: Constraints de SLA aplicadas antes da dominância
+            (ex.: ``{"cost_usd": 2.0}``).  ``None`` = sem restrição.
+        model: Identificador da arquitetura do modelo (componente ``A``
+            do TrainingTemplate, ex.: ``"BERT-PLI"``).
+        dataset: Identificador do dataset de treino (componente ``D``,
+            ex.: ``"COLLIE"``).
+
+    Returns:
+        Lista de :class:`Tier`, um por ponto no conjunto k-Skyband,
+        ordenados por ``domination_count`` crescente (frente de Pareto
+        primeiro).
+
+    Example::
+
+        tiers = generate_psla4ml(all_traces, k=2,
+                                 metrics=["train_time_sec", "cost_usd"])
+        for t in tiers:
+            print(t.hardware, t.domination_count, t.discretized)
+    """
+    if metrics is None:
+        metrics = DEFAULT_METRICS[:]
+
+    # Passo 4: S ← Skyband_k(P)
+    from .dominance import skyband_query
+    skyband_results = skyband_query(
+        results,
+        k=k,
+        sla_constraints=sla_constraints,
+        metrics=metrics,
+        minimize=[True] * len(metrics),
+    )
+
+    if not skyband_results:
+        logger.warning("Skyband_k=%d retornou conjunto vazio; nenhum tier gerado.", k)
+        return []
+
+    # Passos 5–8: criar Tier R para cada p ∈ S após discretização (Passo 9)
+    disc_results = discretize_metrics(
+        results=skyband_results,
+        metrics=metrics,
+        thresholds=thresholds,
+        strategy=strategy,
+        reference_results=results,   # limiares calculados sobre TODO o conjunto
+    )
+
+    tiers: List[Tier] = [
+        _build_tier(r, k=k, model=model, dataset=dataset, metrics=metrics)
+        for r in disc_results
+    ]
+
+    # Ordena por domination_count (frente de Pareto primeiro)
+    tiers.sort(key=lambda t: t.domination_count)
+
+    logger.info(
+        "PSLA4ML gerado: k=%d | %d tiers | modelo=%s | dataset=%s",
+        k, len(tiers), model, dataset,
+    )
+    return tiers

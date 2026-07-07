@@ -59,11 +59,13 @@ from .visualization import (
     skyband_report,
 )
 
-# --- tiers (discretização PSLA4ML — Algoritmo 1, Passo 9) ---
+# --- tiers (discretização PSLA4ML — Algoritmo 1, Passos 4–10) ---
 from .tiers import (
     compute_thresholds,
     discretize_metrics,
     DISCRETIZATION_STRATEGIES,
+    Tier,
+    generate_psla4ml,
 )
 
 __all__ = [
@@ -92,4 +94,6 @@ __all__ = [
     'compute_thresholds',
     'discretize_metrics',
     'DISCRETIZATION_STRATEGIES',
+    'Tier',
+    'generate_psla4ml',
 ]

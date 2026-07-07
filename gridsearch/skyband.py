@@ -42,4 +42,6 @@ from .tiers import (                                         # noqa: F401
     compute_thresholds,
     discretize_metrics,
     DISCRETIZATION_STRATEGIES,
+    Tier,
+    generate_psla4ml,
 )
