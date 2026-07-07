@@ -17,5 +17,14 @@
     { "key": "peak_ram_mb" },
     { "key": "emissions_kg_co2" },
     { "key": "cost_usd" }
-  ]
+  ],
+  "discretization_thresholds": {
+    "_meta": "Limiares de referência PSLA4ML.",
+    "paper_thresholds": {
+      "train_time_sec":   5000,
+      "energy_kwh":       0.2,
+      "emissions_kg_co2": 0.05,
+      "cost_usd":         1.2
+    }
+  }
 }

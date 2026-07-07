@@ -59,6 +59,13 @@ from .visualization import (
     skyband_report,
 )
 
+# --- tiers (discretização PSLA4ML — Algoritmo 1, Passo 9) ---
+from .tiers import (
+    compute_thresholds,
+    discretize_metrics,
+    DISCRETIZATION_STRATEGIES,
+)
+
 __all__ = [
     # --- grid ---
     'generate_parameter_grid',
@@ -81,4 +88,8 @@ __all__ = [
     # --- visualization ---
     'plot_pareto_2d',
     'skyband_report',
+    # --- tiers ---
+    'compute_thresholds',
+    'discretize_metrics',
+    'DISCRETIZATION_STRATEGIES',
 ]

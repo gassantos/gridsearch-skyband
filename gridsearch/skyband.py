@@ -8,6 +8,7 @@ Skyband Query Engine - BERT-PLI  (Facade)
         - ``gridsearch.dominance``     — Pareto / Skyband
         - ``gridsearch.comparison``    — Skyband vs ranking escalar
         - ``gridsearch.visualization`` — graficos e relatorios textuais
+        - ``gridsearch.tiers``         — discretização PSLA4ML (Algoritmo 1, Passo 9)
 
 Autor: Gustavo Alexandre
 """
@@ -34,4 +35,11 @@ from .comparison import compare_skyband_vs_ranking           # noqa: F401
 from .visualization import (                                 # noqa: F401
     plot_pareto_2d,
     skyband_report,
+)
+
+# --- tiers ---
+from .tiers import (                                         # noqa: F401
+    compute_thresholds,
+    discretize_metrics,
+    DISCRETIZATION_STRATEGIES,
 )
