@@ -42,8 +42,8 @@ from gridsearch.protocols import (
 )
 
 from .helpers import (
-    ENERGY_COST_USD_PER_KWH,
     TeeStream,
+    compute_cost_usd,
     estimate_bert_flops,
     load_config,
     now_iso,
@@ -69,6 +69,7 @@ def execute_experiment(
     train_file: str | None = None,
     dataset_overrides: dict | None = None,
     *,
+    environment_cost_per_hour_usd: float | None = None,
     init_fn: InitFn | None = None,
     train_fn: TrainFn | None = None,
     convert_results_fn: ConvertTestResultsFn | None = None,
@@ -86,6 +87,10 @@ def execute_experiment(
         parallel_workers: Número de workers paralelos.
         train_file: Nome do arquivo de treino sem extensão.
         dataset_overrides: Chaves da seção ``[data]`` a sobrescrever.
+        environment_cost_per_hour_usd: Custo horário do ambiente de nuvem
+            (ex: CPU=$0.10/h, GPU=$1.20/h, TPU=$1.50/h). Quando fornecido,
+            usa a fórmula PSLA4ML: ``cost_usd = (train_time_sec/3600) × rate``.
+            ``None`` mantém o cálculo por tarifa flat de energia.
         init_fn: Callable compatível com ``InitFn`` protocol.
         train_fn: Callable compatível com ``TrainFn`` protocol.
         convert_results_fn: Callable compatível com ``ConvertTestResultsFn``.
@@ -271,7 +276,11 @@ def execute_experiment(
     ep = f"ep{train['epoch']}"
     json_filename = f"{exp_id}_{optmzr}_{lr}_{bs}_{ep}_{DATE_EXEC}.json"
 
-    cost_usd = float(energy_kwh) * ENERGY_COST_USD_PER_KWH if energy_kwh is not None else None
+    cost_usd = compute_cost_usd(
+        energy_kwh=energy_kwh,
+        train_time_sec=exec_time,
+        environment_cost_per_hour_usd=environment_cost_per_hour_usd,
+    )
 
     result = build_result_dict(
         experiment_id=experiment_id,

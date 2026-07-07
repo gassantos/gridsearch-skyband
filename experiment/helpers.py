@@ -27,6 +27,45 @@ PathManager.ensure_dir(METRICS_DIR)
 ENERGY_COST_USD_PER_KWH = float(os.getenv("ENERGY_COST_USD_PER_KWH", "0.12"))
 
 
+def compute_cost_usd(
+    energy_kwh: "float | None",
+    train_time_sec: "float | None" = None,
+    environment_cost_per_hour_usd: "float | None" = None,
+) -> "float | None":
+    """Calcula o custo estimado em USD do experimento.
+
+    Quando ``environment_cost_per_hour_usd`` é fornecido usa a fórmula
+    do artigo PSLA4ML (Seção 3.2), baseada no custo horário de nuvem::
+
+        cost_usd = (train_time_sec / 3600) × environment_cost_per_hour_usd
+
+    Caso contrário usa a tarifa de energia flat configurada via
+    ``ENERGY_COST_USD_PER_KWH``::
+
+        cost_usd = energy_kwh × ENERGY_COST_USD_PER_KWH
+
+    Args:
+        energy_kwh: Energia consumida em kWh. Pode ser ``None`` quando o
+            CodeCarbon não está habilitado.
+        train_time_sec: Duração do treinamento em segundos. Necessário
+            quando ``environment_cost_per_hour_usd`` é fornecido.
+        environment_cost_per_hour_usd: Custo horário do ambiente de nuvem
+            (ex: CPU=0.10, GPU=1.20, TPU=1.50 segundo o artigo PSLA4ML).
+            ``None`` ativa o fallback para tarifa flat.
+
+    Returns:
+        Custo estimado em USD, ou ``None`` quando os dados de entrada
+        são insuficientes.
+    """
+    if environment_cost_per_hour_usd is not None:
+        if train_time_sec is None:
+            return None
+        return (train_time_sec / 3600.0) * environment_cost_per_hour_usd
+    if energy_kwh is None:
+        return None
+    return energy_kwh * ENERGY_COST_USD_PER_KWH
+
+
 def now_iso() -> str:
     """Retorna o instante atual em formato ISO 8601 com timezone UTC."""
     return datetime.now(timezone.utc).isoformat()

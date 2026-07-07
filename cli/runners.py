@@ -368,6 +368,21 @@ def run_grid_search_experiments(
             execution_sla_constraints,
         )
 
+    # Extrai custo horário por ambiente (fórmula PSLA4ML: cost_usd = t/3600 × rate)
+    # Presente em grid_search_multienv.json → environments.details.*.cost_per_hour_usd
+    env_cost_registry: Dict[str, float] = {
+        name: float(details.get("cost_per_hour_usd", 0.0))
+        for name, details in (
+            grid_config.get("environments", {}).get("details", {}).items()
+        )
+        if isinstance(details, dict) and details.get("cost_per_hour_usd") is not None
+    }
+    if env_cost_registry:
+        logger.info(
+            "Custo horário por ambiente carregado (fórmula PSLA4ML): %s",
+            env_cost_registry,
+        )
+
     # Executa grid search
     results = run_grid_search(
         base_config_path=base_config_path,
@@ -378,6 +393,7 @@ def run_grid_search_experiments(
         execution_sla_constraints=execution_sla_constraints or None,
         train_dataset=train_dataset,
         dataset_overrides=dataset_overrides,
+        env_cost_registry=env_cost_registry or None,
     )
 
     logger.info("Grid search concluído com sucesso!")

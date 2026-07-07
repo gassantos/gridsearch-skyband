@@ -89,6 +89,7 @@ def run_single_experiment(
     gpu_list: List[int] | None = None,
     parallel_workers: int = 1,
     dataset_overrides: Dict[str, str] | None = None,
+    cloud_cost_per_hour_usd: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Executa um único experimento e retorna os resultados.
@@ -103,6 +104,10 @@ def run_single_experiment(
             para rastreabilidade.
         dataset_overrides: Chaves da seção ``[data]`` a sobrescrever no config
             (ex: ``{"hf_dataset_source": "hub", "hf_dataset_id": "nyu-mll/glue"}``).
+        cloud_cost_per_hour_usd: Custo horário do ambiente de nuvem selecionado.
+            Quando fornecido, ``execute_experiment`` usa a fórmula PSLA4ML:
+            ``cost_usd = (train_time_sec / 3600) × cloud_cost_per_hour_usd``.
+            ``None`` mantém o cálculo por tarifa flat de energia.
 
     Returns:
         Dicionário com resultados do experimento
@@ -119,6 +124,7 @@ def run_single_experiment(
             gpu_list=gpu_list,
             parallel_workers=parallel_workers,
             dataset_overrides=dataset_overrides,
+            environment_cost_per_hour_usd=cloud_cost_per_hour_usd,
         )
 
         # Coleta resultados do arquivo JSON mais recente gerado
@@ -170,6 +176,7 @@ def run_grid_search(
     train_dataset: str = "train_task2",
     dataset_overrides: Dict[str, str] | None = None,
     output_dir: Path | None = None,
+    env_cost_registry: Optional[Dict[str, float]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Executa busca em grade completa.
@@ -191,6 +198,13 @@ def run_grid_search(
         dataset_overrides: Chaves da seção ``[data]`` a sobrescrever no config.
         output_dir: Diretório de saída para estado e resultados (DIP).
             ``None`` usa o default ``output/experiments/grid_search``.
+        env_cost_registry: Mapeamento ``{nome_ambiente: cost_per_hour_usd}``
+            extraído de ``environments.details`` do JSON multiambiente.
+            Quando um experimento possui ``params["environment"]``, o custo
+            horário correspondente é repassado a ``execute_experiment`` para
+            usar a fórmula PSLA4ML: ``cost_usd = (train_time_sec/3600) × rate``.
+            ``None`` mantém o cálculo por tarifa flat de energia para todos
+            os experimentos.
 
     Returns:
         Lista com resultados de todos os experimentos
@@ -284,6 +298,19 @@ def run_grid_search(
             return None
         return [_available_gpus[idx % len(_available_gpus)]]
 
+    def _cost_for_params(params: Dict[str, Any]) -> Optional[float]:
+        """Retorna cost_per_hour_usd do ambiente selecionado, ou None.
+
+        Usado para aplicar a fórmula PSLA4ML no cálculo de custo:
+        ``cost_usd = (train_time_sec / 3600) × cost_per_hour_usd``.
+        """
+        if env_cost_registry is None:
+            return None
+        env_name = params.get("environment")
+        if not env_name:
+            return None
+        return env_cost_registry.get(env_name)
+
     # Executa experimentos
     if parallel > 1:
         logger.info(
@@ -297,8 +324,10 @@ def run_grid_search(
         ) as executor:
             futures = {
                 executor.submit(
-                    run_single_experiment, idx, cfg, params, _gpu_for(idx), parallel,
+                    run_single_experiment,
+                    idx, cfg, params, _gpu_for(idx), parallel,
                     dataset_overrides,
+                    _cost_for_params(params),
                 ): idx
                 for idx, cfg, params in pending_experiments
             }
@@ -330,6 +359,7 @@ def run_grid_search(
                 idx, config_path, params, _gpu_for(idx),
                 parallel_workers=parallel,
                 dataset_overrides=dataset_overrides,
+                cloud_cost_per_hour_usd=_cost_for_params(params),
             )
             all_results.append(result)
             completed_experiments.add(idx)
