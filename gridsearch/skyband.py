@@ -37,11 +37,13 @@ from .visualization import (                                 # noqa: F401
     skyband_report,
 )
 
-# --- tiers ---
+# --- tiers (BL-02/03/04: discretização, Tier, generate_psla4ml, TrainingTemplate) ---
 from .tiers import (                                         # noqa: F401
     compute_thresholds,
     discretize_metrics,
     DISCRETIZATION_STRATEGIES,
     Tier,
     generate_psla4ml,
+    TrainingTemplate,
+    filter_by_template,
 )

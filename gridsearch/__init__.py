@@ -66,6 +66,8 @@ from .tiers import (
     DISCRETIZATION_STRATEGIES,
     Tier,
     generate_psla4ml,
+    TrainingTemplate,
+    filter_by_template,
 )
 
 __all__ = [
@@ -96,4 +98,6 @@ __all__ = [
     'DISCRETIZATION_STRATEGIES',
     'Tier',
     'generate_psla4ml',
+    'TrainingTemplate',
+    'filter_by_template',
 ]

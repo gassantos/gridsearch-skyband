@@ -264,6 +264,209 @@ def discretize_metrics(
 
 
 # ============================================================================
+# TRAINING TEMPLATE — Seção 3.1 do artigo PSLA4ML
+# ============================================================================
+
+def _get_arch_string(result: Dict[str, Any]) -> str:
+    """Extrai o identificador de arquitetura de um resultado.
+
+    Hierarquia de busca:
+    1. ``result["experiment"]["config_name"]`` — formato de produção
+    2. ``result["grid_params"]["architecture" | "model" | "arch"]``
+    3. String vazia como fallback.
+    """
+    exp = result.get("experiment", {})
+    if isinstance(exp, dict):
+        config_name = exp.get("config_name", "")
+        if config_name:
+            return str(config_name)
+    gp = result.get("grid_params", {})
+    if isinstance(gp, dict):
+        for key in ("architecture", "model", "arch"):
+            if key in gp:
+                return str(gp[key])
+    return ""
+
+
+def _get_dataset_string(result: Dict[str, Any]) -> str:
+    """Extrai o identificador do dataset de um resultado.
+
+    Hierarquia de busca:
+    1. ``result["execution"]["train_dataset"]`` — formato de produção
+    2. ``result["grid_params"]["dataset" | "train_dataset" | "data"]``
+    3. String vazia como fallback.
+    """
+    exec_block = result.get("execution", {})
+    if isinstance(exec_block, dict):
+        ds = exec_block.get("train_dataset", "")
+        if ds:
+            return str(ds)
+    gp = result.get("grid_params", {})
+    if isinstance(gp, dict):
+        for key in ("dataset", "train_dataset", "data"):
+            if key in gp:
+                return str(gp[key])
+    return ""
+
+
+def _values_match(
+    actual: Any,
+    expected: Any,
+    float_tol: float = 1e-6,
+) -> bool:
+    """Compara dois valores para correspondência de template.
+
+    Regras:
+    - ``float`` / ``int``: comparação aproximada com tolerância relativa.
+    - ``str``: comparação case-insensitive exata.
+    - Demais: igualdade exata (``==``).
+    """
+    if actual is None:
+        return False
+    if isinstance(expected, float) or (
+        isinstance(expected, (int, float)) and isinstance(actual, (int, float))
+    ):
+        return abs(float(actual) - float(expected)) <= float_tol * max(
+            1.0, abs(float(expected))
+        )
+    if isinstance(expected, str) and isinstance(actual, str):
+        return expected.lower() == actual.lower()
+    return actual == expected
+
+
+@dataclass
+class TrainingTemplate:
+    """Abstração de um Training Template T = ⟨A, D, H⟩ do artigo PSLA4ML.
+
+    Agrupa workflows de treinamento com características estruturais similares,
+    conforme definido na Seção 3.1 do artigo:
+
+        *"Formalmente, um training template é definido como uma tupla
+        T = ⟨A, D, H⟩, em que A denota a arquitetura do modelo, D representa
+        o conjunto de dados de entrada, e H é o espaço de hiperparâmetros
+        estruturais fixos do workflow."*
+
+    Dois workflows são instâncias do mesmo template se e somente se
+    compartilham os mesmos valores para todos os atributos em A, D e H.
+    Os hiperparâmetros de otimização (learning_rate, batch_size, optimizer)
+    são tratados como variáveis livres — não fazem parte do template.
+
+    Semântica de matching:
+    - ``architecture`` / ``dataset_id`` vazios (**``""``**) atuam como
+      *wildcard* (correspondem a qualquer valor).
+    - ``architecture`` é comparado por *substring* case-insensitive contra
+      o ``config_name`` do experimento ou campos de arquitetura similares.
+    - ``dataset_id`` é comparado por *substring* case-insensitive contra o
+      campo ``train_dataset`` ou equivalentes.
+    - Cada entrada em ``fixed_hyperparams`` é comparada por igualdade exata
+      (strings: case-insensitive; floats: tolerância relativa de 1e-6).
+      Valor ``None`` em ``fixed_hyperparams`` atua como wildcard para
+      aquele campo.
+
+    Example::
+
+        # Template do experimento do artigo: T = ⟨BERT-PLI, COLLIE, H_fixo⟩
+        # com H_fixo = {dropout = 0.1}
+        template = TrainingTemplate(
+            architecture="BertPLI",
+            dataset_id="COLLIE",
+            fixed_hyperparams={"dropout": 0.1},
+        )
+
+        filtered = filter_by_template(all_traces, template)
+        tiers = generate_psla4ml(all_traces, k=2, template=template)
+
+    Attributes:
+        architecture: Identificador da arquitetura (componente ``A``).
+            Ex.: ``"BertPLI"``, ``"AttenLSTM"``. String vazia = wildcard.
+        dataset_id: Identificador do dataset (componente ``D``).
+            Ex.: ``"COLLIE"``, ``"train_task2"``. String vazia = wildcard.
+        fixed_hyperparams: Hiperparâmetros estruturais fixos (componente
+            ``H``). Ex.: ``{"dropout": 0.1}``. ``None`` por valor = wildcard
+            para aquele campo.
+    """
+
+    architecture: str = ""
+    dataset_id: str = ""
+    fixed_hyperparams: Dict[str, Any] = field(default_factory=dict)
+
+    def matches(self, result: Dict[str, Any]) -> bool:
+        """Verifica se um resultado é instância deste template.
+
+        Args:
+            result: Dicionário de resultado de um experimento.
+
+        Returns:
+            ``True`` se o resultado é compatível com todos os atributos
+            ``A``, ``D`` e ``H`` do template; ``False`` caso contrário.
+        """
+        # Verifica A (arquitetura)
+        if self.architecture:
+            arch_str = _get_arch_string(result)
+            if self.architecture.lower() not in arch_str.lower():
+                return False
+
+        # Verifica D (dataset)
+        if self.dataset_id:
+            ds_str = _get_dataset_string(result)
+            if self.dataset_id.lower() not in ds_str.lower():
+                return False
+
+        # Verifica H (hiperparâmetros fixos)
+        for key, expected in self.fixed_hyperparams.items():
+            if expected is None:
+                continue
+            actual = _extract_hyperparam(result, key, [key])
+            if not _values_match(actual, expected):
+                return False
+
+        return True
+
+    def __str__(self) -> str:
+        hp_str = ", ".join(f"{k}={v}" for k, v in self.fixed_hyperparams.items())
+        arch = self.architecture or "*"
+        ds = self.dataset_id or "*"
+        return f"T=\u27e8{arch}, {ds}, {{{hp_str}}}\u27e9"
+
+
+def filter_by_template(
+    results: List[Dict[str, Any]],
+    template: "TrainingTemplate",
+) -> List[Dict[str, Any]]:
+    """Filtra resultados para apenas os que correspondem ao TrainingTemplate.
+
+    Implementa a noção de Training Template da Seção 3.1 do artigo PSLA4ML:
+    retorna apenas os traces que são instâncias do template ``T = ⟨A, D, H⟩``
+    fornecido.  Os hiperparâmetros de otimização livres (learning_rate,
+    batch_size, optimizer) não são filtrados — apenas os atributos estruturais
+    de ``template.fixed_hyperparams``.
+
+    Args:
+        results: Lista completa de traces/resultados.
+        template: Template que define os critérios de filtragem.
+
+    Returns:
+        Sublista de ``results`` cujos elementos satisfazem
+        ``template.matches(result) == True``.
+
+    Example::
+
+        template = TrainingTemplate(
+            architecture="BertPLI",
+            dataset_id="COLLIE",
+            fixed_hyperparams={"dropout": 0.1},
+        )
+        bert_traces = filter_by_template(all_traces, template)
+    """
+    filtered = [r for r in results if template.matches(r)]
+    logger.info(
+        "filter_by_template: %d/%d resultados correspondem a %s",
+        len(filtered), len(results), template,
+    )
+    return filtered
+
+
+# ============================================================================
 # ENTIDADE TIER — Representa um nível de serviço do PSLA4ML
 # ============================================================================
 
@@ -437,6 +640,7 @@ def generate_psla4ml(
     sla_constraints: Optional[Dict[str, float]] = None,
     model: str = "BERT-PLI",
     dataset: str = "COLLIE",
+    template: Optional["TrainingTemplate"] = None,
 ) -> List["Tier"]:
     """Gera os tiers do PSLA4ML executando o Algoritmo 1 do artigo.
 
@@ -454,6 +658,12 @@ def generate_psla4ml(
 
     Os passos 1–3 (extração de traces do banco de proveniência e cálculo de
     métricas derivadas) são responsabilidade do chamador.
+
+    Quando ``template`` é fornecido, os resultados são filtrados por
+    :func:`filter_by_template` **antes** da consulta k-Skyband, garantindo
+    que apenas traces do mesmo training template sejam comparados.  Os
+    campos ``model`` e ``dataset`` são sobrescritos pelos atributos do
+    template quando não especificados explicitamente.
 
     Args:
         results: Conjunto de traces ``P`` — tipicamente todos os resultados
@@ -473,6 +683,10 @@ def generate_psla4ml(
             do TrainingTemplate, ex.: ``"BERT-PLI"``).
         dataset: Identificador do dataset de treino (componente ``D``,
             ex.: ``"COLLIE"``).
+        template: Quando fornecido, filtra ``results`` pelos atributos
+            ``A``, ``D`` e ``H`` do template antes de executar o Skyband.
+            ``template.architecture`` e ``template.dataset_id`` sobrescrevem
+            ``model`` e ``dataset`` quando estes têm seus valores padrão.
 
     Returns:
         Lista de :class:`Tier`, um por ponto no conjunto k-Skyband,
@@ -481,13 +695,33 @@ def generate_psla4ml(
 
     Example::
 
-        tiers = generate_psla4ml(all_traces, k=2,
+        template = TrainingTemplate(
+            architecture="BertPLI",
+            dataset_id="COLLIE",
+            fixed_hyperparams={"dropout": 0.1},
+        )
+        tiers = generate_psla4ml(all_traces, k=2, template=template,
                                  metrics=["train_time_sec", "cost_usd"])
         for t in tiers:
             print(t.hardware, t.domination_count, t.discretized)
     """
     if metrics is None:
         metrics = DEFAULT_METRICS[:]
+
+    # Pré-filtro por TrainingTemplate (Seção 3.1 do artigo)
+    if template is not None:
+        results = filter_by_template(results, template)
+        if not results:
+            logger.warning(
+                "Nenhum resultado corresponde ao template %s; nenhum tier gerado.",
+                template,
+            )
+            return []
+        # Propaga architecture/dataset_id do template quando os defaults não foram alterados
+        if model == "BERT-PLI" and template.architecture:
+            model = template.architecture
+        if dataset == "COLLIE" and template.dataset_id:
+            dataset = template.dataset_id
 
     # Passo 4: S ← Skyband_k(P)
     from .dominance import skyband_query
