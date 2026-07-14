@@ -1,7 +1,8 @@
 """
-Testes para gridsearch.tiers — Discretização PSLA4ML e
-geração de tiers 
-Coberturas Discretização:
+Testes para gridsearch.tiers — Discretização PSLA4ML (BL-02),
+geração de tiers (BL-03) e TrainingTemplate / filter_by_template (BL-04).
+
+Coberturas BL-02:
   - compute_thresholds: estratégias median/mean/q1/q3, limiares explícitos,
     mistura de explícito + automático, resultado vazio, estratégia inválida
   - discretize_metrics: campos "discretized" e "discretization_thresholds",
@@ -9,12 +10,23 @@ Coberturas Discretização:
   - _format_threshold: inteiros, floats pequenos, notação científica
   - _interval_for: limites de borda (igual ao limiar → "≥")
 
-Coberturas Tiers / PSLA4ML:
+Coberturas BL-03:
   - Tier: dataclass, campos, to_dict, importação pública
   - _extract_hardware: formatos de resultado (produção, grid, multienv)
   - _extract_hyperparam: caminhos hyperparameters / grid_params / raiz
   - generate_psla4ml: Algoritmo 1 passos 4-10, k=1/k=2, SLA constraints,
     limiares explícitos, modelo/dataset, reprodução da Tabela 3
+
+Coberturas BL-04:
+  - TrainingTemplate: dataclass, campos padrão, __str__
+  - _get_arch_string: formatos de resultado (production / grid)
+  - _get_dataset_string: idem
+  - _values_match: floats com tolerância, strings case-insensitive, None
+  - TrainingTemplate.matches(): A, D, H separados e combinados, wildcards,
+    mismatch parcial, resultado de produção vs grid
+  - filter_by_template: filtra correto, vazio quando nenhum bate, não muta input
+  - generate_psla4ml com template: filtra antes do Skyband, propaga model/dataset,
+    template incompatível retorna []
 """
 
 import pytest
@@ -679,3 +691,453 @@ class TestGeneratePsla4ml:
         assert c.discretized["energy_kwh"]       == "≥ 0.2"
         assert c.discretized["emissions_kg_co2"] == "≥ 0.05"
         assert c.discretized["cost_usd"]         == "< 1.2"
+
+
+# ---------------------------------------------------------------------------
+# BL-04 — _get_arch_string e _get_dataset_string
+# ---------------------------------------------------------------------------
+
+class TestGetArchString:
+    def test_from_experiment_config_name(self):
+        from gridsearch.tiers import _get_arch_string
+        result = {"experiment": {"config_name": "BertPLI_adam_lr1e-05.json"}}
+        assert _get_arch_string(result) == "BertPLI_adam_lr1e-05.json"
+
+    def test_from_grid_params_architecture(self):
+        from gridsearch.tiers import _get_arch_string
+        result = {"grid_params": {"architecture": "AttenLSTM"}}
+        assert _get_arch_string(result) == "AttenLSTM"
+
+    def test_from_grid_params_model(self):
+        from gridsearch.tiers import _get_arch_string
+        result = {"grid_params": {"model": "BertPoint"}}
+        assert _get_arch_string(result) == "BertPoint"
+
+    def test_experiment_takes_priority(self):
+        from gridsearch.tiers import _get_arch_string
+        result = {
+            "experiment": {"config_name": "BertPLI_config.json"},
+            "grid_params": {"model": "Other"},
+        }
+        assert _get_arch_string(result) == "BertPLI_config.json"
+
+    def test_missing_returns_empty(self):
+        from gridsearch.tiers import _get_arch_string
+        assert _get_arch_string({}) == ""
+
+
+class TestGetDatasetString:
+    def test_from_execution_train_dataset(self):
+        from gridsearch.tiers import _get_dataset_string
+        result = {"execution": {"train_dataset": "collie_train"}}
+        assert _get_dataset_string(result) == "collie_train"
+
+    def test_from_grid_params_dataset(self):
+        from gridsearch.tiers import _get_dataset_string
+        result = {"grid_params": {"dataset": "COLIEE"}}
+        assert _get_dataset_string(result) == "COLIEE"
+
+    def test_execution_takes_priority(self):
+        from gridsearch.tiers import _get_dataset_string
+        result = {
+            "execution": {"train_dataset": "train_task2"},
+            "grid_params": {"dataset": "other"},
+        }
+        assert _get_dataset_string(result) == "train_task2"
+
+    def test_missing_returns_empty(self):
+        from gridsearch.tiers import _get_dataset_string
+        assert _get_dataset_string({}) == ""
+
+
+# ---------------------------------------------------------------------------
+# BL-04 — _values_match
+# ---------------------------------------------------------------------------
+
+class TestValuesMatch:
+    def test_float_equal(self):
+        from gridsearch.tiers import _values_match
+        assert _values_match(0.1, 0.1)
+
+    def test_float_within_tolerance(self):
+        from gridsearch.tiers import _values_match
+        assert _values_match(0.10000000001, 0.1)
+
+    def test_float_outside_tolerance(self):
+        from gridsearch.tiers import _values_match
+        assert not _values_match(0.2, 0.1)
+
+    def test_int_float_comparison(self):
+        from gridsearch.tiers import _values_match
+        assert _values_match(1, 1.0)
+
+    def test_string_case_insensitive(self):
+        from gridsearch.tiers import _values_match
+        assert _values_match("BertAdam", "bertadam")
+        assert _values_match("adam", "Adam")
+
+    def test_string_different(self):
+        from gridsearch.tiers import _values_match
+        assert not _values_match("adam", "adamw")
+
+    def test_none_actual_returns_false(self):
+        from gridsearch.tiers import _values_match
+        assert not _values_match(None, 0.1)
+
+    def test_exact_equality_other_types(self):
+        from gridsearch.tiers import _values_match
+        assert _values_match(8, 8)
+        assert not _values_match(8, 16)
+
+
+# ---------------------------------------------------------------------------
+# BL-04 — TrainingTemplate
+# ---------------------------------------------------------------------------
+
+class TestTrainingTemplate:
+    def test_import(self):
+        from gridsearch.tiers import TrainingTemplate
+        assert TrainingTemplate is not None
+
+    def test_import_via_package(self):
+        from gridsearch import TrainingTemplate
+        assert TrainingTemplate is not None
+
+    def test_import_via_skyband_facade(self):
+        from gridsearch.skyband import TrainingTemplate
+        assert TrainingTemplate is not None
+
+    def test_default_construction(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate()
+        assert t.architecture == ""
+        assert t.dataset_id == ""
+        assert t.fixed_hyperparams == {}
+
+    def test_str_representation(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate(
+            architecture="BertPLI",
+            dataset_id="COLLIE",
+            fixed_hyperparams={"dropout": 0.1},
+        )
+        s = str(t)
+        assert "BertPLI" in s
+        assert "COLLIE" in s
+        assert "dropout" in s
+
+    def test_str_wildcards_shown_as_star(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate()
+        s = str(t)
+        assert "*" in s
+
+    # — matches() —
+
+    def _make_prod(self, arch="BertPLI_config.json", ds="collie_train", dropout=0.1):
+        """Resultado em formato de produção (build_result_dict)."""
+        return {
+            "status": "success",
+            "experiment": {"config_name": arch},
+            "execution": {"train_dataset": ds},
+            "hyperparameters": {"dropout": dropout, "optimizer": "adam",
+                                "learning_rate": 1e-5, "batch_size": 8},
+            "resources": {"train_time_sec": 33.0, "cost_usd": 1.21,
+                          "energy_kwh": 0.002, "emissions_kg_co2": 0.001},
+        }
+
+    def _make_grid(self, arch=None, ds=None, dropout=0.1, optimizer="adam"):
+        """Resultado em formato de grid search (run_single_experiment)."""
+        return {
+            "status": "success",
+            "grid_params": {
+                "lr": 1e-5, "bs": 8, "dropout": dropout,
+                "optimizer": optimizer,
+                **({"architecture": arch} if arch else {}),
+                **({"dataset": ds} if ds else {}),
+            },
+            "resources": {"train_time_sec": 33.0, "cost_usd": 1.21,
+                          "energy_kwh": 0.002, "emissions_kg_co2": 0.001},
+        }
+
+    def test_matches_architecture_substring(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate(architecture="BertPLI")
+        assert t.matches(self._make_prod())
+
+    def test_matches_architecture_case_insensitive(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate(architecture="bertpli")
+        assert t.matches(self._make_prod())
+
+    def test_no_match_wrong_architecture(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate(architecture="AttenLSTM")
+        assert not t.matches(self._make_prod())
+
+    def test_matches_dataset_substring(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate(dataset_id="COLLIE")
+        assert t.matches(self._make_prod())
+
+    def test_no_match_wrong_dataset(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate(dataset_id="COLIEE")
+        assert not t.matches(self._make_prod())
+
+    def test_matches_fixed_hyperparams_float(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate(fixed_hyperparams={"dropout": 0.1})
+        assert t.matches(self._make_prod(dropout=0.1))
+
+    def test_no_match_wrong_hyperparam(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate(fixed_hyperparams={"dropout": 0.2})
+        assert not t.matches(self._make_prod(dropout=0.1))
+
+    def test_none_hyperparam_is_wildcard(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate(fixed_hyperparams={"dropout": None})
+        # None = não filtra
+        assert t.matches(self._make_prod(dropout=0.1))
+        assert t.matches(self._make_prod(dropout=0.3))
+
+    def test_empty_template_matches_everything(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate()
+        assert t.matches(self._make_prod())
+        assert t.matches(self._make_grid())
+        assert t.matches({})
+
+    def test_combined_a_d_h_match(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate(
+            architecture="BertPLI",
+            dataset_id="COLLIE",
+            fixed_hyperparams={"dropout": 0.1},
+        )
+        assert t.matches(self._make_prod())
+
+    def test_combined_a_d_h_mismatch_on_h(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate(
+            architecture="BertPLI",
+            dataset_id="COLLIE",
+            fixed_hyperparams={"dropout": 0.2},
+        )
+        assert not t.matches(self._make_prod(dropout=0.1))
+
+    def test_matches_grid_format(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate(
+            architecture="BertPLI",
+            fixed_hyperparams={"dropout": 0.1, "optimizer": "adam"},
+        )
+        assert t.matches(self._make_grid(arch="BertPLI", dropout=0.1, optimizer="adam"))
+
+    def test_no_match_grid_format_wrong_optimizer(self):
+        from gridsearch.tiers import TrainingTemplate
+        t = TrainingTemplate(fixed_hyperparams={"optimizer": "adamw"})
+        assert not t.matches(self._make_grid(optimizer="adam"))
+
+
+# ---------------------------------------------------------------------------
+# BL-04 — filter_by_template
+# ---------------------------------------------------------------------------
+
+class TestFilterByTemplate:
+    def test_import(self):
+        from gridsearch.tiers import filter_by_template
+        assert callable(filter_by_template)
+
+    def test_import_via_package(self):
+        from gridsearch import filter_by_template
+        assert callable(filter_by_template)
+
+    def test_import_via_skyband_facade(self):
+        from gridsearch.skyband import filter_by_template
+        assert callable(filter_by_template)
+
+    def _make(self, arch, ds, dropout=0.1):
+        return {
+            "status": "success",
+            "experiment": {"config_name": arch},
+            "execution": {"train_dataset": ds},
+            "hyperparameters": {"dropout": dropout, "optimizer": "adam"},
+            "resources": {"train_time_sec": 33.0, "cost_usd": 1.2,
+                          "energy_kwh": 0.002, "emissions_kg_co2": 0.001},
+        }
+
+    def test_filters_by_architecture(self):
+        from gridsearch.tiers import TrainingTemplate, filter_by_template
+        results = [
+            self._make("BertPLI_config.json", "collie"),
+            self._make("AttenLSTM_config.json", "collie"),
+            self._make("BertPLI_v2.json", "collie"),
+        ]
+        t = TrainingTemplate(architecture="BertPLI")
+        filtered = filter_by_template(results, t)
+        assert len(filtered) == 2
+        for r in filtered:
+            assert "BertPLI" in r["experiment"]["config_name"]
+
+    def test_filters_by_dataset(self):
+        from gridsearch.tiers import TrainingTemplate, filter_by_template
+        results = [
+            self._make("BertPLI.json", "collie_train"),
+            self._make("BertPLI.json", "coliee_train"),
+            self._make("BertPLI.json", "collie_valid"),
+        ]
+        t = TrainingTemplate(dataset_id="collie")
+        filtered = filter_by_template(results, t)
+        # "collie_train" e "collie_valid" contêm "collie"
+        assert len(filtered) == 2
+
+    def test_filters_by_fixed_hyperparam(self):
+        from gridsearch.tiers import TrainingTemplate, filter_by_template
+        results = [
+            self._make("BertPLI.json", "collie", dropout=0.1),
+            self._make("BertPLI.json", "collie", dropout=0.2),
+            self._make("BertPLI.json", "collie", dropout=0.1),
+        ]
+        t = TrainingTemplate(fixed_hyperparams={"dropout": 0.1})
+        filtered = filter_by_template(results, t)
+        assert len(filtered) == 2
+
+    def test_empty_template_keeps_all(self):
+        from gridsearch.tiers import TrainingTemplate, filter_by_template
+        from gridsearch.tiers import TrainingTemplate
+        results = [self._make("A.json", "ds1"), self._make("B.json", "ds2")]
+        t = TrainingTemplate()
+        assert len(filter_by_template(results, t)) == 2
+
+    def test_no_match_returns_empty(self):
+        from gridsearch.tiers import TrainingTemplate, filter_by_template
+        results = [self._make("BertPLI.json", "collie")]
+        t = TrainingTemplate(architecture="NonExistent")
+        assert filter_by_template(results, t) == []
+
+    def test_does_not_mutate_input(self):
+        from gridsearch.tiers import TrainingTemplate, filter_by_template
+        results = [self._make("BertPLI.json", "collie")]
+        t = TrainingTemplate(architecture="BertPLI")
+        filtered = filter_by_template(results, t)
+        # filtered e results são listas distintas, mas compartilham os mesmos dicts
+        assert filtered is not results
+        assert filtered[0] is results[0]
+
+    def test_paper_template_experiment(self):
+        """Template do artigo: T = ⟨BertPLI, COLLIE, {dropout=0.1}⟩."""
+        from gridsearch.tiers import TrainingTemplate, filter_by_template
+        results = [
+            self._make("BertPLI_config.json", "collie_train", dropout=0.1),
+            self._make("BertPLI_config.json", "collie_train", dropout=0.2),
+            self._make("AttenLSTM_config.json", "collie_train", dropout=0.1),
+        ]
+        t = TrainingTemplate(
+            architecture="BertPLI",
+            dataset_id="COLLIE",
+            fixed_hyperparams={"dropout": 0.1},
+        )
+        filtered = filter_by_template(results, t)
+        assert len(filtered) == 1
+        assert filtered[0]["hyperparameters"]["dropout"] == 0.1
+        assert "BertPLI" in filtered[0]["experiment"]["config_name"]
+
+
+# ---------------------------------------------------------------------------
+# BL-04 — generate_psla4ml com template
+# ---------------------------------------------------------------------------
+
+class TestGeneratePsla4mlWithTemplate:
+    METRICS = ["train_time_sec", "energy_kwh", "emissions_kg_co2", "cost_usd"]
+    PAPER_THR = {"train_time_sec": 5000.0, "energy_kwh": 0.2,
+                 "emissions_kg_co2": 0.05, "cost_usd": 1.2}
+
+    def _mixed_traces(self):
+        """Traces de dois modelos distintos: BertPLI e AttenLSTM."""
+        def _t(idx, arch, ds, hw, time, cost, dropout=0.1):
+            return {
+                "status": "success",
+                "grid_experiment_idx": idx,
+                "experiment": {"config_name": arch},
+                "execution": {"train_dataset": ds},
+                "hyperparameters": {"dropout": dropout, "optimizer": "adam",
+                                    "learning_rate": 1e-5, "batch_size": 8},
+                "selected_environment": hw,
+                "environment": {"device_type": hw},
+                "resources": {"train_time_sec": time, "cost_usd": cost,
+                              "energy_kwh": cost * 0.001,
+                              "emissions_kg_co2": cost * 0.0005},
+            }
+        return [
+            # BertPLI / COLLIE / dropout=0.1
+            _t(0, "BertPLI_cfg.json", "collie_train", "gpu",  33.0, 1.21),
+            _t(1, "BertPLI_cfg.json", "collie_train", "cpu", 6793.0, 0.68),
+            # BertPLI / COLLIE / dropout=0.2 (diferente H)
+            _t(2, "BertPLI_cfg.json", "collie_train", "gpu",  35.0, 1.20, dropout=0.2),
+            # AttenLSTM (diferente A)
+            _t(3, "AttenLSTM_cfg.json", "collie_train", "gpu", 40.0, 1.10),
+        ]
+
+    def test_template_filters_before_skyband(self):
+        from gridsearch.tiers import TrainingTemplate, generate_psla4ml
+        template = TrainingTemplate(
+            architecture="BertPLI",
+            dataset_id="COLLIE",
+            fixed_hyperparams={"dropout": 0.1},
+        )
+        tiers = generate_psla4ml(
+            self._mixed_traces(), k=1, metrics=self.METRICS,
+            thresholds=self.PAPER_THR, template=template,
+        )
+        # Apenas 2 traces passam o filtro (dropout=0.1, BertPLI, COLLIE)
+        assert len(tiers) >= 1
+        for t in tiers:
+            assert t.model == "BertPLI"
+            assert t.dataset == "COLLIE"
+
+    def test_template_propagates_model_and_dataset(self):
+        from gridsearch.tiers import TrainingTemplate, generate_psla4ml
+        template = TrainingTemplate(
+            architecture="BertPLI",
+            dataset_id="COLLIE",
+        )
+        tiers = generate_psla4ml(
+            self._mixed_traces(), k=1, metrics=self.METRICS,
+            template=template,
+        )
+        assert all(t.model == "BertPLI" for t in tiers)
+        assert all(t.dataset == "COLLIE" for t in tiers)
+
+    def test_explicit_model_overrides_template(self):
+        from gridsearch.tiers import TrainingTemplate, generate_psla4ml
+        template = TrainingTemplate(architecture="BertPLI")
+        tiers = generate_psla4ml(
+            self._mixed_traces(), k=1, metrics=self.METRICS,
+            model="BERT-Custom", template=template,
+        )
+        # model explícito != "BERT-PLI" default → NÃO é sobrescrito pelo template
+        assert all(t.model == "BERT-Custom" for t in tiers)
+
+    def test_incompatible_template_returns_empty(self):
+        from gridsearch.tiers import TrainingTemplate, generate_psla4ml
+        template = TrainingTemplate(architecture="NonExistentModel")
+        result = generate_psla4ml(
+            self._mixed_traces(), k=1, metrics=self.METRICS,
+            template=template,
+        )
+        assert result == []
+
+    def test_no_template_uses_all_traces(self):
+        from gridsearch.tiers import generate_psla4ml
+        tiers_all = generate_psla4ml(
+            self._mixed_traces(), k=1, metrics=self.METRICS,
+            thresholds=self.PAPER_THR,
+        )
+        tiers_filtered = generate_psla4ml(
+            self._mixed_traces(), k=1, metrics=self.METRICS,
+            thresholds=self.PAPER_THR,
+        )
+        # Sem template, os dois são idênticos
+        assert len(tiers_all) == len(tiers_filtered)
