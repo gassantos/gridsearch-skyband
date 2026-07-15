@@ -1,10 +1,12 @@
 {
   "_meta": {
     "per_experiment_train_time_sec": 1800,
-    "note": "Baseline usada no pré-filtro SLA para train_time_sec. Ajuste conforme hardware e dataset reais.",
+    "note": "Baseline (256 tokens, 3 epochs). Ajuste conforme hardware e dataset reais.",
     "time_estimation": {
       "baseline_train_time_sec": 1800,
       "reference_batch_size": 16,
+      "reference_num_epochs": 3,
+      "reference_max_seq_length": 256,
       "default_precision": "fp16",
       "optimizer_factors": {
         "adam": 1.0,
@@ -16,6 +18,11 @@
         "fp32": 1.15,
         "fp16": 1.0,
         "bf16": 0.98
+      },
+      "max_seq_length_factors": {
+        "128": 0.25,
+        "256": 1.0,
+        "512": 4.0
       }
     }
   },
@@ -23,17 +30,21 @@
   "experiment_base": "config/experiments/BertPLI.config",
   "output_dir": "output/experiments/grid_search",
   "parallel_workers": 2,
-  
+
   "hyperparameters": {
-    "learning_rate": [1e-5, 2e-5],
-    "batch_size": [8, 16],
-    "optimizer": ["adamw", "bert_adam"],
-    "dropout": [0.1]
+    "_comment": "BL-05: max_seq_length e num_epochs com valores únicos para validar o pipeline sem overhead",
+    "learning_rate":  [1e-5, 2e-5],
+    "batch_size":     [8, 16],
+    "optimizer":      ["adamw", "bert_adam"],
+    "dropout":        [0.1],
+    "max_seq_length": [128],
+    "num_epochs":     [2]
   },
-  
+
   "notes": [
-    "Configuração de teste com apenas 8 experimentos (2 x 2 x 1 + seeds)",
-    "Ideal para validação rápida do pipeline",
+    "Configuração de teste: 2 × 2 × 2 × 1 × 1 × 1 = 8 experimentos",
+    "Inclui max_seq_length e num_epochs (BL-05) com valores mínimos para validar o pipeline",
+    "Ideal para validação rápida antes de executar grids maiores",
     "Memória estimada: ~7-10 GB com parallel=2"
   ]
 }

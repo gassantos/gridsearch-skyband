@@ -8,6 +8,8 @@
     "time_estimation": {
       "baseline_train_time_sec": 1800,
       "reference_batch_size": 16,
+      "reference_num_epochs": 3,
+      "reference_max_seq_length": 256,
       "default_precision": "fp16",
       "optimizer_factors": {
         "adam": 1.0,
@@ -19,26 +21,34 @@
         "fp32": 1.15,
         "fp16": 1.0,
         "bf16": 0.98
-      }
+      },
+      "max_seq_length_factors": {
+        "128": 0.25,
+        "256": 1.0,
+        "512": 4.0
+      },
+      "note_seq_scaling": "Atenção BERT é O(n²): 128 tokens = 0.25x, 256 tokens = 1.0x (base), 512 tokens = 4.0x"
     },
     "hypothesis": "Dada uma personalização de SLA, quais são as melhores configurações em domínio multicriterio usando Skyband para propor um Ambiente Computacional adequado de Pipelines de Aprendizado de Máquina via Consultas Skyband",
     "sla_profiles_path": "gridsearch/config/sla_profiles.json",
     "base_config": "config/experiments/BertPLI.config",
     "total_combinations": {
-      "hyperparameters_only": 216,
-      "with_environments": 1080,
-      "formula": "4 (lr) × 3 (bs) × 2 (opt) × 3 (dropout) × 3 (seed) × 5 (envs) = 1080",
-      "note": "Cada combinação hiperparâmetro+ambiente gera um ponto no espaço multicriterio Skyband"
+      "hyperparameters_only": 1944,
+      "with_environments": 9720,
+      "formula": "4 (lr) × 3 (bs) × 2 (opt) × 3 (dropout) × 3 (seed) × 3 (max_seq_length) × 3 (num_epochs) × 5 (envs) = 9720",
+      "note": "BL-05: max_seq_length e num_epochs adicionados. Cada combinação hiperparâmetro+ambiente gera um ponto no espaço multicritério Skyband"
     }
   },
 
   "hyperparameters": {
-    "_comment": "Idêntico ao grid_search.json; otimizadores reduzidos a [adam, adamw] para manter 216 combinações base (4×3×2×3×3)",
-    "learning_rate": [1e-5, 2e-5, 3e-5, 5e-5],
-    "batch_size": [8, 16, 32],
-    "optimizer": ["adam", "adamw"],
-    "dropout": [0.1, 0.2, 0.3],
-    "seed": [42, 123, 456]
+    "_comment": "BL-05: max_seq_length e num_epochs adicionados; otimizadores reduzidos a [adam, adamw] para controle do espaço; lr mantido em 4 valores",
+    "learning_rate":  [1e-5, 2e-5, 3e-5, 5e-5],
+    "batch_size":     [8, 16, 32],
+    "optimizer":      ["adam", "adamw"],
+    "dropout":        [0.1, 0.2, 0.3],
+    "seed":           [42, 123, 456],
+    "max_seq_length": [128, 256, 512],
+    "num_epochs":     [2, 3, 5]
   },
 
   "environments": {

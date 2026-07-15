@@ -10,6 +10,8 @@
     "optimizer":      { "section": "train",       "key": "optimizer" },
     "dropout":        { "section": "model",       "key": "dropout" },
     "seed":           { "section": "experiment",  "key": "seed" },
-    "environment":    { "section": "environment", "key": "runtime_profile" }
+    "environment":    { "section": "environment", "key": "runtime_profile" },
+    "num_epochs":     { "section": "train",       "key": "epoch" },
+    "max_seq_length": { "section": "data",        "key": "max_seq_length" }
   }
 }

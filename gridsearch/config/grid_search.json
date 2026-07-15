@@ -1,10 +1,12 @@
 {
   "_meta": {
     "per_experiment_train_time_sec": 1800,
-    "note": "Baseline usada no pré-filtro SLA para train_time_sec. Ajuste conforme hardware e dataset reais.",
+    "note": "Baseline (256 tokens, 3 epochs, batch=16, fp16). Ajuste conforme hardware e dataset reais.",
     "time_estimation": {
       "baseline_train_time_sec": 1800,
       "reference_batch_size": 16,
+      "reference_num_epochs": 3,
+      "reference_max_seq_length": 256,
       "default_precision": "fp16",
       "optimizer_factors": {
         "adam": 1.0,
@@ -16,33 +18,43 @@
         "fp32": 1.15,
         "fp16": 1.0,
         "bf16": 0.98
-      }
+      },
+      "max_seq_length_factors": {
+        "128": 0.25,
+        "256": 1.0,
+        "512": 4.0
+      },
+      "note_seq_scaling": "Atenção BERT é O(n²): 128 tokens = 0.25x, 256 tokens = 1.0x (base), 512 tokens = 4.0x"
     }
   },
-  "description": "Configuração completa de Grid Search (432 combinações)",
+  "description": "Configuração completa de Grid Search — espaço expandido (BL-05)",
   "experiment_base": "config/experiments/BertPLI.config",
   "output_dir": "output/experiments/grid_search",
   "parallel_workers": 2,
-  
+
   "hyperparameters": {
-    "learning_rate": [1e-5, 2e-5, 3e-5, 5e-5],
-    "batch_size": [8, 16, 32],
-    "optimizer": ["adam", "adamw", "sgd", "bert_adam"],
-    "dropout": [0.1, 0.2, 0.3],
-    "seed": [42, 123, 456]
+    "_comment": "BL-05: lr expandido de 4 para 5 valores; max_seq_length e num_epochs adicionados (Seção 5 do artigo)",
+    "learning_rate":  [5e-6, 1e-5, 2e-5, 3e-5, 5e-5],
+    "batch_size":     [8, 16, 32],
+    "optimizer":      ["adam", "adamw", "sgd", "bert_adam"],
+    "dropout":        [0.1, 0.2, 0.3],
+    "seed":           [42, 123, 456],
+    "max_seq_length": [128, 256, 512],
+    "num_epochs":     [2, 3, 5]
   },
-  
+
   "notes": [
-    "Grid completo: 4 x 3 x 4 x 3 x 3 = 432 experimentos",
-    "Tempo estimado: ~72-108 horas com parallel=2",
-    "Memória recomendada: 32GB RAM mínimo",
-    "Use --parallel 2 para evitar OOM em sistemas com 32GB"
+    "Grade completa (BL-05): 5 × 3 × 4 × 3 × 3 × 3 × 3 = 14.580 experimentos",
+    "Tempo estimado (512 tokens, 5 épocas, batch=8): até 28.800s/exp — use --sla-constraint train_time_sec=<limite> para pré-filtrar",
+    "Para explorar apenas qualidade preditiva, prefira grid_search_quality.json (9 combinações)",
+    "Memória recomendada: 64GB RAM mínimo para max_seq_length=512 com parallel=2",
+    "Use --parallel 2 e --resume para execuções longas com retomada automática"
   ],
-  
+
   "recommendations": {
     "parallel_workers": 2,
     "max_parallel_workers": 4,
-    "min_ram_gb": 32,
-    "safe_ram_gb": 64
+    "min_ram_gb": 64,
+    "safe_ram_gb": 128
   }
 }

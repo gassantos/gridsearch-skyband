@@ -233,7 +233,27 @@ def _estimate_train_time_sec(
     precision_factors = time_cfg.get("precision_factors", {}) if isinstance(time_cfg, dict) else {}
     precision_scale = _safe_float(precision_factors.get(precision), default=1.0)
 
-    return baseline_sec * batch_scale * optimizer_scale * precision_scale
+    # BL-05: escala por número de épocas (linear)
+    reference_num_epochs = _safe_float(time_cfg.get("reference_num_epochs"), default=None)
+    num_epochs = _safe_float(params.get("num_epochs"), default=None)
+    if reference_num_epochs and reference_num_epochs > 0 and num_epochs and num_epochs > 0:
+        epochs_scale = num_epochs / reference_num_epochs
+    else:
+        epochs_scale = 1.0
+
+    # BL-05: escala por max_seq_length (atenção BERT é O(n²))
+    reference_seq_len = _safe_float(time_cfg.get("reference_max_seq_length"), default=None)
+    max_seq_length = _safe_float(params.get("max_seq_length"), default=None)
+    if reference_seq_len and reference_seq_len > 0 and max_seq_length and max_seq_length > 0:
+        seq_scale_factors = time_cfg.get("max_seq_length_factors", {})
+        seq_scale = _safe_float(
+            seq_scale_factors.get(str(int(max_seq_length))),
+            default=(max_seq_length / reference_seq_len) ** 2,
+        )
+    else:
+        seq_scale = 1.0
+
+    return baseline_sec * batch_scale * optimizer_scale * precision_scale * epochs_scale * seq_scale
 
 
 def _resolve_train_time_baseline_sec(
