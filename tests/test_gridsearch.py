@@ -444,6 +444,173 @@ class TestAnalyzeResults:
 
 
 # ---------------------------------------------------------------------------
+# BL-06 — detect_collinear_metrics e metric_correlation_matrix
+# ---------------------------------------------------------------------------
+
+class TestCollinearityDetectionBL06:
+    """Testes para detect_collinear_metrics (BL-06 / Seção 4 do artigo PSLA4ML)."""
+
+    def _make(self, idx, time, energy, co2, cost):
+        return {
+            "status": "success",
+            "grid_experiment_idx": idx,
+            "grid_params": {"lr": 1e-5, "bs": 8},
+            "resources": {
+                "train_time_sec":   time,
+                "energy_kwh":       energy,
+                "emissions_kg_co2": co2,
+                "cost_usd":         cost,
+            },
+        }
+
+    @pytest.fixture
+    def perfectly_collinear(self):
+        """4 métricas perfeitamente correlacionadas (r = 1.0)."""
+        return [self._make(i, t, t * 0.001, t * 0.0001, t * 0.0002)
+                for i, t in enumerate([100, 200, 300, 400, 500, 600])]
+
+    @pytest.fixture
+    def uncorrelated(self):
+        """Métricas não correlacionadas entre si."""
+        import math
+        return [
+            self._make(0, 100, 0.9,  0.09, 0.1),
+            self._make(1, 200, 0.1,  0.80, 0.9),
+            self._make(2, 300, 0.7,  0.02, 0.5),
+            self._make(3, 400, 0.3,  0.60, 0.2),
+            self._make(4, 500, 0.6,  0.04, 0.8),
+            self._make(5, 600, 0.2,  0.70, 0.3),
+        ]
+
+    def test_import_detect_collinear_metrics(self):
+        from gridsearch.analysis.correlations import detect_collinear_metrics
+        assert callable(detect_collinear_metrics)
+
+    def test_import_via_analysis_package(self):
+        from gridsearch.analysis import detect_collinear_metrics, CollinearityReport
+        assert callable(detect_collinear_metrics)
+        assert CollinearityReport is not None
+
+    def test_collinearity_report_dataclass(self):
+        from gridsearch.analysis import CollinearityReport
+        r = CollinearityReport()
+        assert r.has_collinearity is False
+        assert r.collinear_pairs == []
+        assert r.correlation_matrix == {}
+
+    def test_detects_perfect_collinearity(self, perfectly_collinear):
+        from gridsearch.analysis.correlations import detect_collinear_metrics
+        metrics = ["train_time_sec", "energy_kwh", "emissions_kg_co2", "cost_usd"]
+        report = detect_collinear_metrics(perfectly_collinear, metrics=metrics, threshold=0.95)
+        assert report.has_collinearity is True
+        assert len(report.collinear_pairs) == 6  # C(4,2) = 6 pares
+
+    def test_no_collinearity_below_threshold(self, uncorrelated):
+        from gridsearch.analysis.correlations import detect_collinear_metrics
+        metrics = ["train_time_sec", "energy_kwh", "emissions_kg_co2", "cost_usd"]
+        report = detect_collinear_metrics(uncorrelated, metrics=metrics, threshold=0.95)
+        assert report.has_collinearity is False
+        assert report.collinear_pairs == []
+
+    def test_pairs_sorted_by_abs_r_descending(self, perfectly_collinear):
+        from gridsearch.analysis.correlations import detect_collinear_metrics
+        metrics = ["train_time_sec", "energy_kwh", "emissions_kg_co2", "cost_usd"]
+        report = detect_collinear_metrics(perfectly_collinear, metrics=metrics, threshold=0.9)
+        if len(report.collinear_pairs) > 1:
+            rs = [abs(r) for _, _, r in report.collinear_pairs]
+            assert rs == sorted(rs, reverse=True)
+
+    def test_default_metrics_are_paper_four(self):
+        from gridsearch.analysis.correlations import detect_collinear_metrics
+        report = detect_collinear_metrics([])
+        assert set(report.metrics) == {
+            "train_time_sec", "energy_kwh", "emissions_kg_co2", "cost_usd"
+        }
+
+    def test_report_contains_n_samples(self, perfectly_collinear):
+        from gridsearch.analysis.correlations import detect_collinear_metrics
+        report = detect_collinear_metrics(perfectly_collinear, metrics=["train_time_sec", "energy_kwh"])
+        assert report.n_samples == len(perfectly_collinear)
+
+    def test_ignores_failed_results(self, perfectly_collinear):
+        from gridsearch.analysis.correlations import detect_collinear_metrics
+        with_failed = perfectly_collinear + [
+            {"status": "failed", "resources": {"train_time_sec": 9999, "energy_kwh": 9999}}
+        ]
+        report_clean  = detect_collinear_metrics(perfectly_collinear, metrics=["train_time_sec", "energy_kwh"])
+        report_failed = detect_collinear_metrics(with_failed,         metrics=["train_time_sec", "energy_kwh"])
+        assert report_clean.n_samples == report_failed.n_samples
+
+    def test_empty_results_returns_no_collinearity(self):
+        from gridsearch.analysis.correlations import detect_collinear_metrics
+        report = detect_collinear_metrics([], metrics=["train_time_sec", "energy_kwh"])
+        assert report.has_collinearity is False
+        assert report.n_samples == 0
+
+    def test_threshold_parameter_respected(self, perfectly_collinear):
+        from gridsearch.analysis.correlations import detect_collinear_metrics
+        metrics = ["train_time_sec", "energy_kwh"]
+        report_95 = detect_collinear_metrics(perfectly_collinear, metrics=metrics, threshold=0.95)
+        report_99 = detect_collinear_metrics(perfectly_collinear, metrics=metrics, threshold=0.999)
+        # threshold menor inclui mais pares (ou igual); threshold maior é mais restritivo
+        assert len(report_95.collinear_pairs) >= len(report_99.collinear_pairs)
+
+    def test_diagonal_of_matrix_is_one(self, perfectly_collinear):
+        from gridsearch.analysis.correlations import metric_correlation_matrix
+        metrics = ["train_time_sec", "energy_kwh"]
+        matrix = metric_correlation_matrix(perfectly_collinear, metrics)
+        for m in metrics:
+            assert matrix[m][m] == pytest.approx(1.0)
+
+    def test_matrix_is_symmetric(self, perfectly_collinear):
+        from gridsearch.analysis.correlations import metric_correlation_matrix
+        metrics = ["train_time_sec", "energy_kwh", "cost_usd"]
+        matrix = metric_correlation_matrix(perfectly_collinear, metrics)
+        for m_a in metrics:
+            for m_b in metrics:
+                assert matrix[m_a][m_b] == pytest.approx(
+                    matrix[m_b][m_a], rel=1e-9
+                )
+
+    def test_skyband_report_includes_collinearity_warning(self, perfectly_collinear):
+        """skyband_report deve incluir bloco de aviso quando há multicolinearidade."""
+        from gridsearch.skyband import skyband_report
+        metrics = ["train_time_sec", "energy_kwh", "emissions_kg_co2", "cost_usd"]
+        report = skyband_report(
+            perfectly_collinear, k=1, metrics=metrics,
+            collinearity_threshold=0.95,
+        )
+        assert "AVISO DE MULTICOLINEARIDADE" in report
+        assert "↔" in report
+
+    def test_skyband_report_no_warning_when_uncorrelated(self, uncorrelated):
+        """skyband_report NÃO deve incluir aviso quando não há colinearidade."""
+        from gridsearch.skyband import skyband_report
+        metrics = ["train_time_sec", "energy_kwh", "emissions_kg_co2", "cost_usd"]
+        report = skyband_report(
+            uncorrelated, k=1, metrics=metrics,
+            collinearity_threshold=0.95,
+        )
+        assert "AVISO DE MULTICOLINEARIDADE" not in report
+
+    def test_skyband_report_paper_scenario(self):
+        """Reproduz o cenário do artigo: métricas r>0.99 em hardware fixo."""
+        from gridsearch.analysis.correlations import detect_collinear_metrics
+        # Simula execuções em CPU fixo: energia ∝ tempo, CO2 ∝ energia, custo ∝ energia
+        results = [
+            self._make(i, t,
+                       t * 4.64e-5,           # energy = t × taxa_cpu
+                       t * 4.64e-5 * 0.2677,  # CO2 = energy × fator_region
+                       t / 3600 * 0.10)        # cost = (t/3600) × $0.10/h
+            for i, t in enumerate([5410, 6805, 6793, 3701, 3662, 3634, 30, 32, 36])
+        ]
+        report = detect_collinear_metrics(results, threshold=0.95)
+        assert report.has_collinearity is True
+        # No artigo, todos os 6 pares têm r > 0.99
+        assert len(report.collinear_pairs) == 6
+
+
+# ---------------------------------------------------------------------------
 # Ponto de entrada manual (não executado pelo pytest)
 # ---------------------------------------------------------------------------
 
