@@ -51,6 +51,8 @@ class SingleCommand(Command):
             gpu_list=args.gpu,
         )
         if not args.no_skyband:
+            # require_state=False: modo single não gera estado de grid search;
+            # a ausência do arquivo é aviso, não erro.
             run_skyband_analysis(
                 k=args.skyband_k,
                 sla_constraints=sla_dict or None,
@@ -58,6 +60,7 @@ class SingleCommand(Command):
                 metrics=args.skyband_metrics,
                 compare=args.skyband_compare,
                 state_file=args.skyband_state,
+                require_state=False,
             )
 
 

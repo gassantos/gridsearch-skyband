@@ -180,6 +180,7 @@ def run_skyband_analysis(
     metrics: Optional[list] = None,
     compare: bool = False,
     state_file: Optional[str] = None,
+    require_state: bool = True,
 ) -> None:
     """
     Carrega resultados do estado do grid search e executa análise Skyband.
@@ -191,6 +192,11 @@ def run_skyband_analysis(
         metrics:          Lista de métricas para dominância.
         compare:          Se True, imprime comparação Skyband vs ranking escalar.
         state_file:       Caminho direto ao JSON de estado.
+        require_state:    Quando ``True`` (padrão), encerra o processo com erro
+                          se nenhum estado de grid search for encontrado.
+                          Quando ``False``, registra aviso e retorna sem análise
+                          (comportamento adequado para ``--mode single``, que não
+                          gera arquivo de estado).
     """
     # ── Localiza o arquivo de estado ────────────────────────────────────────
     if state_file:
@@ -198,15 +204,28 @@ def run_skyband_analysis(
     else:
         candidates = sorted(GRID_OUTPUT_DIR.glob("grid_search_state_*.json"), reverse=True)
         if not candidates:
-            logger.error(
-                "Nenhum arquivo de estado encontrado em: %s", GRID_OUTPUT_DIR
-            )
-            sys.exit(1)
+            if require_state:
+                logger.error(
+                    "Nenhum arquivo de estado encontrado em: %s", GRID_OUTPUT_DIR
+                )
+                sys.exit(1)
+            else:
+                logger.info(
+                    "Análise Skyband ignorada: nenhum estado de grid search em '%s'. "
+                    "Execute '--mode grid' primeiro para gerar o estado, ou use "
+                    "'--no-skyband' para suprimir este aviso.",
+                    GRID_OUTPUT_DIR,
+                )
+                return
         sf = candidates[0]
 
     if not sf.exists():
-        logger.error("Arquivo de estado não encontrado: %s", sf)
-        sys.exit(1)
+        if require_state:
+            logger.error("Arquivo de estado não encontrado: %s", sf)
+            sys.exit(1)
+        else:
+            logger.warning("Arquivo de estado não encontrado: %s — Skyband ignorado.", sf)
+            return
 
     logger.info("Carregando estado de: %s", sf)
     with open(sf, encoding="utf-8") as f:
