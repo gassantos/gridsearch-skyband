@@ -32,6 +32,10 @@ from .statistics import (                    # noqa: F401, E402
 from .correlations import (                  # noqa: F401, E402
     compute_correlation,
     analyze_correlations,
+    metric_correlation_matrix,
+    detect_collinear_metrics,
+    CollinearityReport,
+    DEFAULT_COLLINEARITY_THRESHOLD,
 )
 
 # --- ranking ---

@@ -169,16 +169,22 @@ def skyband_report(
     sla_constraints: Optional[Dict[str, float]] = None,
     metrics: Optional[List[str]] = None,
     minimize: Optional[List[bool]] = None,
+    collinearity_threshold: float = 0.95,
 ) -> str:
     """
     Gera relatório textual do Skyband_k para um dado conjunto de resultados.
 
+    Quando métricas altamente correlacionadas são selecionadas, emite um aviso
+    de multicolinearidade no topo do relatório (BL-06, Seção 4 do artigo PSLA4ML).
+
     Args:
-        results:         Lista de resultados de experimentos.
-        k:               Ordem do Skyband.
-        sla_constraints: Constraints de SLA.
-        metrics:         Métricas utilizadas na dominância.
-        minimize:        Direção de otimização por métrica.
+        results:                Lista de resultados de experimentos.
+        k:                      Ordem do Skyband.
+        sla_constraints:        Constraints de SLA.
+        metrics:                Métricas utilizadas na dominância.
+        minimize:               Direção de otimização por métrica.
+        collinearity_threshold: Limiar |r| para emitir aviso de multicolinearidade
+                                (padrão: 0.95).
 
     Returns:
         String formatada com relatório completo do Skyband.
@@ -200,6 +206,32 @@ def skyband_report(
         f"  Total de candidatos admissíveis : {len(sla_filter(results, sla_constraints or {}))}",
         f"  Tamanho do Skyband_{k}          : {len(sb)}",
         "",
+    ]
+
+    # BL-06 — Aviso de multicolinearidade (Seção 4 do artigo PSLA4ML)
+    try:
+        from .analysis.correlations import detect_collinear_metrics
+        coll = detect_collinear_metrics(
+            results, metrics=metrics, threshold=collinearity_threshold
+        )
+        if coll.has_collinearity:
+            lines += [
+                "⚠  AVISO DE MULTICOLINEARIDADE",
+                f"   Pares com |r| ≥ {collinearity_threshold:.2f} "
+                f"({coll.n_samples} traces, {len(coll.collinear_pairs)} par(es)):",
+            ]
+            for m_a, m_b, r in coll.collinear_pairs:
+                lines.append(f"   · {m_a:<28} ↔  {m_b:<28}  r = {r:+.4f}")
+            lines += [
+                "   → A fronteira Skyband tende a colapsar para poucos pontos",
+                "     extremos quando critérios altamente correlacionados são",
+                "     combinados.  Considere usar apenas um critério por grupo.",
+                "",
+            ]
+    except Exception:
+        pass  # aviso de multicolinearidade é não-crítico; não interrompe o relatório
+
+    lines += [
         f"{'Rank':<5} {'Exp':>5} {'Dom':>4}  {'Parâmetros':<45}  Métricas",
         "-" * 72,
     ]
