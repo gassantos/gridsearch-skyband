@@ -641,6 +641,7 @@ def generate_psla4ml(
     model: str = "BERT-PLI",
     dataset: str = "COLLIE",
     template: Optional["TrainingTemplate"] = None,
+    include_quality_metrics: bool = False,
 ) -> List["Tier"]:
     """Gera os tiers do PSLA4ML executando o Algoritmo 1 do artigo.
 
@@ -687,6 +688,10 @@ def generate_psla4ml(
             ``A``, ``D`` e ``H`` do template antes de executar o Skyband.
             ``template.architecture`` e ``template.dataset_id`` sobrescrevem
             ``model`` e ``dataset`` quando estes têm seus valores padrão.
+        include_quality_metrics: Quando ``True``, adiciona ``f1_score`` e
+            ``accuracy`` ao conjunto de critérios de dominância com
+            ``minimize=False`` (maximizar).  Requer que os traces tenham
+            métricas de avaliação em ``result["evaluation"]``. (BL-07)
 
     Returns:
         Lista de :class:`Tier`, um por ponto no conjunto k-Skyband,
@@ -705,8 +710,16 @@ def generate_psla4ml(
         for t in tiers:
             print(t.hardware, t.domination_count, t.discretized)
     """
+    from .dominance import (
+        skyband_query, QUALITY_METRICS, QUALITY_MINIMIZE, _get_minimize_flag,
+    )
+
     if metrics is None:
-        metrics = DEFAULT_METRICS[:]
+        if include_quality_metrics:
+            from .dominance import DEFAULT_METRICS, DEFAULT_MINIMIZE
+            metrics = DEFAULT_METRICS[:] + QUALITY_METRICS[:]
+        else:
+            metrics = DEFAULT_METRICS[:]
 
     # Pré-filtro por TrainingTemplate (Seção 3.1 do artigo)
     if template is not None:
@@ -724,13 +737,15 @@ def generate_psla4ml(
             dataset = template.dataset_id
 
     # Passo 4: S ← Skyband_k(P)
-    from .dominance import skyband_query
+    # Usa _get_minimize_flag para inferir corretamente o sentido de otimização
+    # de cada métrica (recurso=minimizar, qualidade=maximizar) — fix BL-07
+    minimize_flags = [_get_minimize_flag(m) for m in metrics]
     skyband_results = skyband_query(
         results,
         k=k,
         sla_constraints=sla_constraints,
         metrics=metrics,
-        minimize=[True] * len(metrics),
+        minimize=minimize_flags,
     )
 
     if not skyband_results:

@@ -48,6 +48,9 @@ from .dominance import (
     skyband_query,
     DEFAULT_METRICS,
     DEFAULT_MINIMIZE,
+    QUALITY_METRICS,
+    QUALITY_MINIMIZE,
+    _get_minimize_flag,
 )
 
 # --- comparison ---
@@ -87,6 +90,9 @@ __all__ = [
     'skyband_query',
     'DEFAULT_METRICS',
     'DEFAULT_MINIMIZE',
+    'QUALITY_METRICS',
+    'QUALITY_MINIMIZE',
+    '_get_minimize_flag',
     # --- comparison ---
     'compare_skyband_vs_ranking',
     # --- visualization ---

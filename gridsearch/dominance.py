@@ -42,7 +42,39 @@ def _load_metrics_config() -> tuple[list[str], list[bool]]:
     return names, minimize
 
 
+def _load_quality_metrics_config() -> tuple[list[str], list[bool]]:
+    """Carrega métricas de qualidade preditiva (f1_score, accuracy) do JSON.
+
+    Métricas de qualidade devem ser **maximizadas** (``minimize=False``),
+    ao contrário das métricas de recurso.  São extraídas de
+    ``result["evaluation"]`` em vez de ``result["resources"]``.
+    """
+    with open(_METRICS_CONFIG_PATH, encoding="utf-8") as f:
+        data = json.load(f)
+    entries = data.get("quality_metrics", [])
+    names = [e["name"] for e in entries]
+    minimize = [e.get("minimize", False) for e in entries]
+    return names, minimize
+
+
 DEFAULT_METRICS, DEFAULT_MINIMIZE = _load_metrics_config()
+QUALITY_METRICS, QUALITY_MINIMIZE = _load_quality_metrics_config()
+
+# Lookup completo {nome_métrica: minimize_flag} para todas as métricas conhecidas
+_METRIC_MINIMIZE_LOOKUP: Dict[str, bool] = {
+    **dict(zip(DEFAULT_METRICS, DEFAULT_MINIMIZE)),
+    **dict(zip(QUALITY_METRICS, QUALITY_MINIMIZE)),
+}
+
+
+def _get_minimize_flag(metric: str) -> bool:
+    """Retorna o flag de minimização para uma métrica.
+
+    Para métricas de recurso (train_time_sec, energy_kwh, etc.) retorna
+    ``True`` (minimizar).  Para métricas de qualidade (f1_score, accuracy)
+    retorna ``False`` (maximizar).  Métricas desconhecidas assumem ``True``.
+    """
+    return _METRIC_MINIMIZE_LOOKUP.get(metric, True)
 
 
 # ============================================================================
@@ -53,8 +85,10 @@ def _extract_metric_value(result: Dict[str, Any], metric: str) -> float:
     """
     Extrai o valor de uma métrica de um resultado de experimento.
 
-    Procura primeiro em result["resources"] (métricas de recursos) e,
-    caso não encontre, busca diretamente na raiz do dicionário.
+    Hierarquia de busca:
+    1. ``result["resources"]`` — métricas de recurso (train_time_sec, etc.)
+    2. ``result["evaluation"]`` — métricas de qualidade (f1_score, accuracy)
+    3. Raiz do dicionário (compatibilidade retroativa)
 
     Args:
         result: Dicionário de resultado de um experimento.
@@ -64,7 +98,12 @@ def _extract_metric_value(result: Dict[str, Any], metric: str) -> float:
         Valor numérico da métrica ou float('inf') se ausente/None.
     """
     resources = result.get("resources", {})
-    value = resources.get(metric)
+    value = resources.get(metric) if isinstance(resources, dict) else None
+
+    if value is None:
+        evaluation = result.get("evaluation") or {}
+        if isinstance(evaluation, dict):
+            value = evaluation.get(metric)
 
     if value is None:
         value = result.get(metric)
@@ -231,6 +270,7 @@ def skyband_query(
     sla_constraints: Optional[Dict[str, float]] = None,
     metrics: Optional[List[str]] = None,
     minimize: Optional[List[bool]] = None,
+    include_quality_metrics: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Consulta Skyband de ordem k com filtro de SLA personalizado.
@@ -239,11 +279,15 @@ def skyband_query(
     aplicando primeiro o filtro de SLA sobre o espaço de candidatos.
 
     Args:
-        results:         Lista de resultados de experimentos.
-        k:               Ordem do Skyband (>= 1).
-        sla_constraints: Constraints de SLA {metrica: valor_maximo}.
-        metrics:         Lista de nomes de métricas para dominância.
-        minimize:        Lista de booleanos por métrica.
+        results:                 Lista de resultados de experimentos.
+        k:                       Ordem do Skyband (>= 1).
+        sla_constraints:         Constraints de SLA {metrica: valor_maximo}.
+        metrics:                 Lista de nomes de métricas para dominância.
+        minimize:                Lista de booleanos por métrica.
+        include_quality_metrics: Quando ``True`` e ``metrics is None``,
+                                 adiciona ``QUALITY_METRICS`` (f1_score,
+                                 accuracy) ao conjunto de critérios com
+                                 ``minimize=False`` (maximizar). (BL-07)
 
     Returns:
         Lista de dicionários de experimento com chaves extras:
@@ -257,9 +301,15 @@ def skyband_query(
         raise ValueError(f"k deve ser >= 1, recebido: {k}")
 
     if metrics is None:
-        metrics = DEFAULT_METRICS[:]
-    if minimize is None:
-        minimize = [True] * len(metrics)
+        if include_quality_metrics:
+            metrics = DEFAULT_METRICS[:] + QUALITY_METRICS[:]
+            minimize = DEFAULT_MINIMIZE[:] + QUALITY_MINIMIZE[:]
+        else:
+            metrics = DEFAULT_METRICS[:]
+            minimize = DEFAULT_MINIMIZE[:]
+    elif minimize is None:
+        # Infere flags de minimização a partir do lookup de todas as métricas
+        minimize = [_get_minimize_flag(m) for m in metrics]
 
     if len(metrics) != len(minimize):
         raise ValueError(

@@ -11,6 +11,10 @@
     { "name": "emissions_kg_co2",  "minimize": true },
     { "name": "cost_usd",          "minimize": true }
   ],
+  "quality_metrics": [
+    { "name": "f1_score",  "minimize": false, "description": "Micro F1-score (maximizar)" },
+    { "name": "accuracy",  "minimize": false, "description": "Acurácia do modelo (maximizar)" }
+  ],
   "resource_metrics": [
     { "key": "train_time_sec",    "label": "train_time" },
     { "key": "energy_kwh" },
@@ -19,7 +23,7 @@
     { "key": "cost_usd" }
   ],
   "discretization_thresholds": {
-    "_meta": "Limiares de referência PSLA4ML.",
+    "_meta": "Limiares de referência do artigo PSLA4ML (Tabela 3). Usados como 'thresholds' explícitos em discretize_metrics() para reproduzir os resultados do paper. A estratégia padrão ('median') calcula limiares automaticamente dos traces.",
     "paper_thresholds": {
       "train_time_sec":   5000,
       "energy_kwh":       0.2,

@@ -19,6 +19,9 @@ Autor: Gustavo Alexandre
 from .dominance import (                                     # noqa: F401
     DEFAULT_METRICS,
     DEFAULT_MINIMIZE,
+    QUALITY_METRICS,
+    QUALITY_MINIMIZE,
+    _get_minimize_flag,
     _extract_metric_value,
     _build_vector,
     _load_metrics_config,
