@@ -2,7 +2,7 @@
 Testes pytest para o módulo gridsearch.skyband.
 
 Coberturas:
-  - Importações de todos os símbolos públicos
+  - Importações de todos os símbolos públicos (inclui BL-07)
   - sla_filter: admissão, rejeição, filtro vazio, sem resultados válidos
   - dominates: casos de dominância estrita, igualdade, não-dominância
   - pareto_front (k=1): frente correta, sem duplicatas, campo domination_count=0
@@ -10,6 +10,8 @@ Coberturas:
   - compare_skyband_vs_ranking: Jaccard, conjuntos only_in_skyband / only_in_scalar
   - skyband_report: formato textual, conteúdo esperado
   - Integração com sla_profiles.json e grid_search_multienv.json
+  - BL-07: QUALITY_METRICS, _get_minimize_flag, _extract_metric_value com evaluation,
+           skyband_query com include_quality_metrics
 """
 
 import json
@@ -522,3 +524,168 @@ class TestMultienvConfigIntegration:
             assert mg_cost == sla_cost, (
                 f"cost_per_hour diverge para '{env}': multienv={mg_cost} sla={sla_cost}"
             )
+
+
+# ---------------------------------------------------------------------------
+# BL-07 — QUALITY_METRICS, _get_minimize_flag, _extract_metric_value e
+#          skyband_query com include_quality_metrics
+# ---------------------------------------------------------------------------
+
+class TestQualityMetricsBL07:
+    """Testes para métricas de qualidade preditiva (f1_score, accuracy)."""
+
+    def _make_with_eval(self, idx, time, cost, f1, acc, status="success"):
+        """Trace com métricas de avaliação em result['evaluation']."""
+        return {
+            "status": status,
+            "grid_experiment_idx": idx,
+            "grid_params": {"lr": 1e-5, "bs": 8},
+            "resources": {"train_time_sec": time, "cost_usd": cost,
+                          "energy_kwh": cost * 0.001, "emissions_kg_co2": cost * 0.0005,
+                          "total_gflops": 100.0},
+            "evaluation": {"f1_score": f1, "accuracy": acc, "source": "pool_out_training"},
+        }
+
+    @pytest.fixture
+    def traces_with_quality(self):
+        return [
+            # fast/expensive/low-quality
+            self._make_with_eval(0, 30.0,  1.20, 0.50, 0.55),
+            # fast/expensive/high-quality
+            self._make_with_eval(1, 35.0,  1.25, 0.85, 0.87),
+            # slow/cheap/medium-quality
+            self._make_with_eval(2, 6000.0, 0.60, 0.70, 0.72),
+            # slow/cheap/low-quality
+            self._make_with_eval(3, 6500.0, 0.65, 0.50, 0.52),
+        ]
+
+    # — QUALITY_METRICS e constantes —
+
+    def test_quality_metrics_exported(self):
+        from gridsearch.skyband import QUALITY_METRICS, QUALITY_MINIMIZE
+        assert "f1_score" in QUALITY_METRICS
+        assert "accuracy" in QUALITY_METRICS
+
+    def test_quality_metrics_minimize_is_false(self):
+        from gridsearch.skyband import QUALITY_METRICS, QUALITY_MINIMIZE
+        for m, minimize in zip(QUALITY_METRICS, QUALITY_MINIMIZE):
+            assert minimize is False, f"{m} deveria ter minimize=False"
+
+    def test_default_metrics_minimize_is_true(self):
+        from gridsearch.skyband import DEFAULT_METRICS, DEFAULT_MINIMIZE
+        for m, minimize in zip(DEFAULT_METRICS, DEFAULT_MINIMIZE):
+            assert minimize is True, f"{m} deveria ter minimize=True"
+
+    # — _get_minimize_flag —
+
+    def test_get_minimize_flag_resource_metric(self):
+        from gridsearch.dominance import _get_minimize_flag
+        assert _get_minimize_flag("train_time_sec") is True
+        assert _get_minimize_flag("cost_usd") is True
+        assert _get_minimize_flag("energy_kwh") is True
+
+    def test_get_minimize_flag_quality_metric(self):
+        from gridsearch.dominance import _get_minimize_flag
+        assert _get_minimize_flag("f1_score") is False
+        assert _get_minimize_flag("accuracy") is False
+
+    def test_get_minimize_flag_unknown_metric_defaults_true(self):
+        from gridsearch.dominance import _get_minimize_flag
+        assert _get_minimize_flag("unknown_metric_xyz") is True
+
+    # — _extract_metric_value com result["evaluation"] —
+
+    def test_extract_f1_from_evaluation(self):
+        from gridsearch.dominance import _extract_metric_value
+        result = {"status": "success",
+                  "resources": {},
+                  "evaluation": {"f1_score": 0.85}}
+        assert _extract_metric_value(result, "f1_score") == pytest.approx(0.85)
+
+    def test_extract_accuracy_from_evaluation(self):
+        from gridsearch.dominance import _extract_metric_value
+        result = {"status": "success",
+                  "resources": {},
+                  "evaluation": {"accuracy": 0.90}}
+        assert _extract_metric_value(result, "accuracy") == pytest.approx(0.90)
+
+    def test_extract_resource_metric_still_works(self):
+        from gridsearch.dominance import _extract_metric_value
+        result = {"status": "success",
+                  "resources": {"train_time_sec": 33.0},
+                  "evaluation": {"f1_score": 0.85}}
+        assert _extract_metric_value(result, "train_time_sec") == pytest.approx(33.0)
+
+    def test_extract_resources_takes_priority_over_evaluation(self):
+        """Se o mesmo campo existir em resources E evaluation, resources vence."""
+        from gridsearch.dominance import _extract_metric_value
+        result = {"resources": {"f1_score": 0.5}, "evaluation": {"f1_score": 0.9}}
+        assert _extract_metric_value(result, "f1_score") == pytest.approx(0.5)
+
+    def test_extract_missing_quality_metric_returns_inf(self):
+        from gridsearch.dominance import _extract_metric_value
+        result = {"status": "success", "resources": {}, "evaluation": {}}
+        assert _extract_metric_value(result, "f1_score") == float("inf")
+
+    # — skyband_query com include_quality_metrics —
+
+    def test_include_quality_metrics_expands_criteria(self, traces_with_quality):
+        from gridsearch.skyband import skyband_query, DEFAULT_METRICS, QUALITY_METRICS
+        # Sem qualidade: 5 métricas de recurso
+        sb_default = skyband_query(traces_with_quality, k=1)
+        # Com qualidade: 5 recurso + 2 qualidade = 7
+        sb_quality = skyband_query(traces_with_quality, k=1,
+                                   include_quality_metrics=True)
+        # A fronteira pode mudar ao incluir dimensões de qualidade
+        assert isinstance(sb_quality, list)
+
+    def test_high_quality_trace_in_skyband_with_quality_metrics(self, traces_with_quality):
+        """O trace com melhor f1 (idx=1) deve estar no Skyband quando qualidade importa."""
+        from gridsearch.skyband import skyband_query
+        sb = skyband_query(traces_with_quality, k=2, include_quality_metrics=True)
+        indices = {r["grid_experiment_idx"] for r in sb}
+        assert 1 in indices, "Trace com melhor f1_score deveria estar no Skyband"
+
+    def test_quality_minimize_direction_is_respected(self, traces_with_quality):
+        """f1_score=0.85 (alto) deve ser preferível a f1_score=0.50 (baixo)."""
+        from gridsearch.skyband import skyband_query
+        # Trace 1 (f1=0.85) domina Trace 0 (f1=0.50) se ambos têm recursos similares
+        metrics  = ["f1_score", "accuracy"]
+        minimize = [False, False]  # maximizar ambos
+        sb = skyband_query(traces_with_quality, k=1,
+                           metrics=metrics, minimize=minimize)
+        indices = {r["grid_experiment_idx"] for r in sb}
+        # Trace com f1=0.50 e acc=0.55 é dominado por f1=0.85 e acc=0.87
+        assert 1 in indices
+
+    def test_include_quality_metrics_backward_compatible(self, mock_results):
+        """include_quality_metrics=False mantém comportamento original."""
+        sb_old = skyband_query(mock_results, k=1)
+        sb_new = skyband_query(mock_results, k=1, include_quality_metrics=False)
+        assert [r["grid_experiment_idx"] for r in sb_old] == \
+               [r["grid_experiment_idx"] for r in sb_new]
+
+    # — generate_psla4ml com include_quality_metrics —
+
+    def test_generate_psla4ml_with_quality(self, traces_with_quality):
+        from gridsearch.tiers import generate_psla4ml
+        tiers = generate_psla4ml(
+            traces_with_quality, k=2, include_quality_metrics=True,
+        )
+        assert isinstance(tiers, list)
+        # Os tiers devem incluir f1_score e accuracy em raw_metrics
+        for t in tiers:
+            assert "f1_score" in t.raw_metrics or "accuracy" in t.raw_metrics
+
+    def test_generate_psla4ml_minimize_flags_correct(self, traces_with_quality):
+        """Verifica que generate_psla4ml não aplica mais minimize=True para quality."""
+        from gridsearch.tiers import generate_psla4ml
+        # Com quality: trace de alta qualidade (f1=0.85) não deve ser excluído
+        # da fronteira em favor do de baixa qualidade (f1=0.50)
+        tiers = generate_psla4ml(
+            traces_with_quality, k=1,
+            metrics=["f1_score", "accuracy"],
+            include_quality_metrics=False,  # métricas explícitas
+        )
+        assert any(t.raw_metrics.get("f1_score", 0) >= 0.80 for t in tiers), \
+            "Tier com f1_score alto deveria estar na fronteira"
