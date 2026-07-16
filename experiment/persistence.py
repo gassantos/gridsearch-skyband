@@ -48,9 +48,10 @@ def build_result_dict(
     eval_metrics: Dict[str, Any],
     stdout: str,
     stderr: str,
+    tpu_check: Any = None,
 ) -> Dict[str, Any]:
     """Constrói o dicionário padronizado de resultado de um experimento."""
-    return {
+    result: Dict[str, Any] = {
         "experiment": {
             "id": experiment_id,
             "config_name": json_filename,
@@ -91,6 +92,19 @@ def build_result_dict(
             "stderr_tail": stderr[-1000:],
         },
     }
+
+    # BL-08: inclui status de ativação do TPU quando disponível
+    if tpu_check is not None:
+        tpu_dict = (
+            tpu_check.to_dict()
+            if hasattr(tpu_check, "to_dict")
+            else dict(tpu_check)
+        )
+        result["tpu_acceleration_check"] = tpu_dict
+        if tpu_dict.get("warning"):
+            result["warnings"] = result.get("warnings", []) + [tpu_dict["warning"]]
+
+    return result
 
 
 def write_json_result(result: Dict[str, Any], json_filename: str) -> Path:

@@ -19,6 +19,13 @@ dependencies = [
 
 ]
 
+[project.optional-dependencies]
+tpu = [
+    # torch_xla é necessário para ativar o acelerador MXU em ambientes TPU.
+    # Instale com: uv sync --extra tpu
+    "torch_xla>=2.0; sys_platform == 'linux'",
+]
+
 [project.scripts]
 bert-pli-train            = "scripts.train:main"
 bert-pli-test             = "scripts.test:main"

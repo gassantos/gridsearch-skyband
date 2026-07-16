@@ -48,6 +48,7 @@ from .helpers import (
     load_config,
     now_iso,
 )
+from .tpu_check import check_tpu_acceleration
 from .evaluation import extract_eval_metrics
 from .persistence import append_csv_row, build_result_dict, write_json_result
 
@@ -236,6 +237,16 @@ def execute_experiment(
     exec_time = time.perf_counter() - start_time
     end_iso = now_iso()
 
+    # -------- TPU ACCELERATION CHECK (BL-08) --------
+    # Detecta execução silenciosa na host CPU quando device_type é TPU mas o
+    # MXU não foi ativado (gpu_energy ≈ 0 nos dados do CodeCarbon).
+    # Cf. Seção 4 do artigo PSLA4ML: "gpu_power = 0,0 W e device_type = CPU".
+    tpu_check = check_tpu_acceleration(
+        device_type=device_type,
+        tracker=tracker,
+        exec_time_sec=exec_time,
+    )
+
     # -------- METRICS (proxy / external) --------
     avg_ram = sum(ram_samples) / len(ram_samples) if ram_samples else None
     peak_ram = max(ram_samples) if ram_samples else None
@@ -310,6 +321,7 @@ def execute_experiment(
         eval_metrics=eval_metrics,
         stdout=stdout,
         stderr=stderr,
+        tpu_check=tpu_check,
     )
 
     write_json_result(result, json_filename)
