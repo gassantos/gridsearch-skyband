@@ -12,26 +12,28 @@ O módulo já está integrado ao projeto. Nenhuma instalação adicional é nece
 
 ```powershell
 # Teste rápido (8 experimentos)
-python -m gridsearch.core --config config/experiments/BertPLI.config \
-                          --search-config gridsearch/config/grid_search_test.json \
-                          --parallel 2
+python -m main --mode grid \
+    --grid-config gridsearch/config/grid_search_test.json \
+    --parallel 2
 
-# Execução completa (216 experimentos)
-python -m gridsearch.core --config config/experiments/BertPLI.config \
-                          --search-config gridsearch/config/grid_search.json \
-                          --parallel 2
+# Execução completa (4.860 experimentos)
+python -m main --mode grid \
+    --grid-config gridsearch/config/grid_search.json \
+    --parallel 2
 
-# Execução multiambiente (1080 combinações = hiperparâmetros x ambientes)
-python -m gridsearch.core --config config/experiments/BertPLI.config \
-                          --search-config gridsearch/config/grid_search_multienv.json \
-                          --parallel 2
+# Execução multiambiente (9.720 combinações = hiperparâmetros x 5 ambientes)
+python -m main --mode grid \
+    --grid-config gridsearch/config/grid_search_multienv.json \
+    --parallel 2
 
 # Retomar execução interrompida
-python -m gridsearch.core --resume --parallel 2
+python -m main --mode grid --resume --parallel 2
 
-# Análise de resultados
-python -m gridsearch.core --analyze-only
+# Análise Skyband sobre estado existente
+python -m main --skyband-only
 ```
+
+> `python -m gridsearch.core` ainda funciona para uso programático direto do módulo, mas `main.py` é o entrypoint recomendado — centraliza modos `single`/`grid`, pré-filtro de SLA e análise Skyband.
 
 ### Modo PowerShell
 
@@ -75,22 +77,30 @@ analysis = analyze_results(results)
 
 ```sh
 gridsearch/
-├── __init__.py              # Exports do módulo (v1.1.0)
-├── core.py                  # Motor de execução
+├── __init__.py              # Exports do módulo
+├── core.py / grid.py / executor.py / protocols.py  # Motor de execução do grid
 ├── utils.py                 # Validações de memória
-├── analysis.py              # Análise escalar de resultados
-├── skyband.py               # Motor de Skyband Query (multi-critério)
+├── analysis/                # Pacote: correlações, estatísticas, ranking e relatórios
+├── dominance.py             # Dominância de Pareto / Skyband query
+├── comparison.py            # Comparação Skyband vs ranking escalar
+├── visualization.py         # Gráficos e relatórios textuais do Skyband
+├── tiers.py                 # Discretização PSLA4ML (Tier, TrainingTemplate)
+├── sla_prefilter.py         # Perfis de SLA e pré-filtro de execução
+├── skyband.py                # Facade deprecated (compatibilidade retroativa)
 ├── config/
-│   ├── grid_search.json          # Grid completo (216 exp)
+│   ├── grid_search.json          # Grid completo (4.860 exp)
 │   ├── grid_search_test.json     # Grid de teste (8 exp)
 │   ├── grid_search_minimal.json  # Grid minimal (3 exp)
-│   ├── grid_search_multienv.json # Grid multi-ambiente (1080 exp)
+│   ├── grid_search_quality.json  # Grid reduzido focado em qualidade preditiva
+│   ├── grid_search_multienv.json # Grid multi-ambiente (9.720 exp)
 │   └── sla_profiles.json         # Perfis de SLA (6 perfis × 5 ambientes)
 └── docs/
     ├── GRIDSEARCH.md        # Este documento
     ├── OVERVIEW.md          # Visão geral
     └── PIPELINE.md          # Pipeline completo
 ```
+
+O CLI (`cli/`) implementa o despacho de comandos (`commands.py`, `parser.py`, `runners.py`, `sla_summary.py`) usado por `main.py` para orquestrar `single`, `grid` e `--skyband-only`.
 
 ## ⚙️ Configurações
 
@@ -102,15 +112,17 @@ gridsearch/
 - **Tempo:** ~2-3 horas com parallel=2
 - **Memória:** ~7-10 GB
 
-### Grid Completo (216 experimentos)
+### Grid Completo (4.860 experimentos)
 
-- Learning rates: [1e-5, 2e-5, 3e-5, 5e-5]
+- Learning rates: [5e-6, 1e-5, 2e-5, 3e-5, 5e-5]
 - Batch sizes: [8, 16, 32]
-- Otimizadores: ["adam", "adamw"]
+- Otimizadores: ["adam", "adamw", "sgd", "bert_adam"]
 - Dropouts: [0.1, 0.2, 0.3]
 - Seeds: [42, 123, 456]
-- **Tempo:** ~72-108 horas com parallel=2
-- **Memória:** 32GB RAM recomendado
+- Max seq length: [128, 256, 512]
+- Num epochs: [2, 3, 5]
+- **Tempo:** variável conforme hardware e `max_seq_length`/`num_epochs`; baseline de 1800s/exp em `_meta.time_estimation` (256 tokens, 3 épocas, batch=16) — use `--sla-constraint train_time_sec=<limite>` ou `--sla-profile` para pré-filtrar
+- **Memória:** 64GB RAM mínimo recomendado para `max_seq_length=512` com `parallel=2`
 
 ## 🔍 Análise de Resultados
 
@@ -322,7 +334,7 @@ SKYBAND vs RANKING ESCALAR
 ========================================================================
 ```
 
-> **Jaccard = 1.0** com 3 pontos indica concordância total. Com 216+ experimentos o Skyband revela trade-offs reais que o escalar colapsa.
+> **Jaccard = 1.0** com 3 pontos indica concordância total. Com 4.860 experimentos o Skyband revela trade-offs reais que o escalar colapsa.
 
 #### 4. Skyband sobre arquivo de estado específico
 
@@ -342,7 +354,7 @@ python -m main --skyband-only --skyband-metrics train_time_sec cost_usd
 #### 6. Grid search completo com Skyband automático ao final
 
 ```bash
-# Treina 216 configurações e logo após aplica Skyband com perfil sustentável
+# Treina 4.860 configurações e logo após aplica Skyband com perfil sustentável
 python -m main \
     --mode grid \
     --grid-config gridsearch/config/grid_search.json \

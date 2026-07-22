@@ -1,10 +1,10 @@
 # GridSearch Skyband: Otimização de Hiperparâmetros para Modelos de Linguagem
 
-![Python](https://img.shields.io/badge/python-3.11-blue?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/python-3.12-blue?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-%E2%89%A52.9.0-EE4C2C?logo=pytorch&logoColor=white)
 ![Transformers](https://img.shields.io/badge/transformers-%E2%89%A55.2.0-FFD21E?logo=huggingface&logoColor=black)
 ![codecarbon](https://img.shields.io/badge/codecarbon-%E2%89%A53.2.2-4CAF50?logo=leaflet&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-128%20passing-brightgreen?logo=pytest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-400%2B%20passing-brightgreen?logo=pytest&logoColor=white)
 
 ## Instalação
 
@@ -12,7 +12,7 @@ O projeto usa [`uv`](https://docs.astral.sh/uv/) como gerenciador de ambiente e 
 
 ### Pré-requisitos
 
-- Python ≥ 3.11
+- Python ≥ 3.12, < 3.14
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/) instalado
 - (Opcional) NVIDIA GPU com CUDA 12.8 para aceleração
 
@@ -42,7 +42,7 @@ uv run python -c "import torch; print(torch.__version__, '| CUDA:', torch.cuda.i
 
 ## Testes
 
-A suite de testes cobre os componentes críticos do pipeline de treinamento (101 testes pytest).
+A suite de testes cobre os componentes críticos do pipeline de treinamento (mais de 400 testes pytest).
 
 ```bash
 # Suite completa
@@ -66,6 +66,13 @@ uv run --group dev pytest tests/test_warmup_scheduler.py::TestSchedulerLRBehavio
 | `test_init_tool_state.py` | Carregamento de estado em `init_all`, tolerância a checkpoint inválido |
 | `test_gridsearch.py` | Geração de grade, validação de memória, filtragem de config, análise de resultados |
 | `test_gridsearch_config.py` | Estrutura e naming dos arquivos JSON de configuração do grid |
+| `test_skyband.py` | Dominância Pareto/Skyband, filtro de SLA, comparação vs. ranking escalar |
+| `test_psla4ml.py` | Discretização de métricas, `Tier`, `TrainingTemplate`, geração PSLA4ML |
+| `test_eval_metrics.py` | Cálculo de precision/recall/F1/accuracy na avaliação |
+| `test_device.py` | Detecção e seleção de dispositivo (CPU/CUDA/MPS) |
+| `test_huggingface_dataset.py` | Carregamento via HuggingFace Hub e JSONL local |
+| `test_tpu_check.py` | Checagem de disponibilidade de TPU |
+| `test_run_experiment_fixes.py` | Regressões do motor de execução central (`execute_experiment`) |
 
 ---
 
@@ -151,12 +158,12 @@ uv run python -m main --mode grid \
     --grid-config gridsearch/config/grid_search_test.json \
     --parallel 2
 
-# Busca completa (produção — 216 combinações)
+# Busca completa (produção — 4.860 combinações; use --sla-constraint/--sla-profile para pré-filtrar)
 uv run python -m main --mode grid \
     --grid-config gridsearch/config/grid_search.json \
     --parallel 4
 
-# Busca multiambiente (1080 combinações = hiperparâmetros x ambientes ativos)
+# Busca multiambiente (9.720 combinações = hiperparâmetros x 5 ambientes ativos)
 uv run python -m main --mode grid \
     --grid-config gridsearch/config/grid_search_multienv.json \
     --parallel 2
@@ -174,6 +181,76 @@ uv run python -m main --mode grid \
 > **Distribuição de GPUs:** em modo paralelo, o `main.py` distribui os workers em round-robin pelas GPUs disponíveis de forma automática. Para controle explícito, use `--gpu 0 1`.
 > **Pré-filtro SLA:** em modo `grid`, `--sla-profile` e `--sla-constraint` agora também filtram combinações antes da execução quando a constraint é estimável. Hoje isso vale diretamente para `peak_ram_mb` e para `train_time_sec` quando o JSON da grade expõe uma baseline de tempo em `_meta.time_estimation` ou no fallback `_meta.per_experiment_train_time_sec`. No grid multiambiente, a estimativa pode usar o baseline específico de cada ambiente.
 > **Grid multiambiente:** quando `environments.active` está presente no JSON, o grid executa o produto `hyperparameters × environments`, adicionando o campo de ambiente aos parâmetros de cada experimento.
+
+### Dataset via HuggingFace Hub ou JSONL local
+
+Além dos datasets em `data/` referenciados pelo `.config`, o CLI aceita fontes alternativas via `--dataset-source`, sobrescrevendo o `DataLoader` configurado:
+
+```bash
+# Dataset público do HuggingFace Hub (ex.: glue/mrpc)
+uv run python -m main --mode single \
+    --dataset-source hub --dataset-id nyu-mll/glue --dataset-config mrpc
+
+# Dataset local em JSONL via HuggingFace Datasets
+uv run python -m main --mode single --dataset-source local_json
+
+# Grid search combinando dataset do Hub com pré-filtro de SLA
+uv run python -m main --mode grid --sla-profile dev \
+    --dataset-source hub --dataset-id nyu-mll/glue --dataset-config mrpc
+```
+
+> Implementado em [dataset/nlp/HuggingFace.py](dataset/nlp/HuggingFace.py). `--dataset-source` aceita `hub` (requer `--dataset-id`; `--dataset-config` é opcional) ou `local_json` (usa arquivos JSONL locais, ignorando o `DataLoader` do `.config`).
+
+---
+
+## Análise Skyband e Perfis de SLA
+
+Ao final de cada execução (`single` ou `grid`), o CLI roda automaticamente uma análise **Skyband** (dominância Pareto com tolerância `k`) sobre as métricas de recursos e qualidade, ranqueando as configurações não-dominadas. O comportamento é implementado em [gridsearch/dominance.py](gridsearch/dominance.py), [gridsearch/comparison.py](gridsearch/comparison.py), [gridsearch/tiers.py](gridsearch/tiers.py) e [gridsearch/visualization.py](gridsearch/visualization.py), orquestrado por [cli/runners.py](cli/runners.py).
+
+```bash
+# Desativar a análise Skyband automática (executa somente os experimentos)
+uv run python -m main --mode grid --no-skyband
+
+# Analisar um estado de grid search já existente, sem novo treino
+uv run python -m main --skyband-only
+
+# Skyband-only com k customizado e perfil de SLA sustentável
+uv run python -m main --skyband-only --skyband-k 2 --sla-profile sustentavel
+
+# Skyband-only com constraints de SLA customizadas (pode repetir a flag)
+uv run python -m main --skyband-only \
+    --sla-constraint cost_usd=5.0 \
+    --sla-constraint train_time_sec=7200
+
+# Comparar o resultado do Skyband contra um ranking escalar tradicional
+uv run python -m main --skyband-only --sla-profile balanceado --skyband-compare
+
+# Analisar um arquivo de estado específico com métricas customizadas
+uv run python -m main --skyband-only \
+    --skyband-state output/experiments/grid_search/grid_search_state_GPU_2026-03-01.json \
+    --skyband-k 2 --skyband-metrics train_time_sec cost_usd energy_kwh
+```
+
+### Perfis de SLA disponíveis (`--sla-profile`)
+
+| Perfil | Restrições |
+| --- | --- |
+| `economico` | `cost_usd <= 2.00` |
+| `sustentavel` | `energy_kwh <= 0.05`, `emissions_kg_co2 <= 0.01` |
+| `tempo` | `train_time_sec <= 3600` |
+| `balanceado` | `cost_usd <= 5.00`, `train_time_sec <= 7200`, `energy_kwh <= 0.1` |
+| `dev` | `train_time_sec <= 1800`, `peak_ram_mb <= 8192` |
+| `producao` | `cost_usd <= 20.00`, `train_time_sec <= 1800`, `peak_ram_mb <= 16384` |
+
+Perfis definidos em `gridsearch/config/sla_profiles.json`. Métricas aceitas em `--sla-constraint` (filtro de admissibilidade): `train_time_sec`, `energy_kwh`, `peak_ram_mb`, `emissions_kg_co2`, `cost_usd`. Métricas aceitas em `--skyband-metrics` (critérios de dominância): `train_time_sec`, `energy_kwh`, `total_gflops`, `emissions_kg_co2`, `cost_usd`.
+
+### Discretização PSLA4ML (Tiers)
+
+O módulo [gridsearch/tiers.py](gridsearch/tiers.py) implementa a discretização de métricas em faixas (`Tier`) e a geração de `TrainingTemplate`s a partir do conjunto Skyband, permitindo filtrar configurações por template (`filter_by_template`) além do ranking bruto.
+
+### Análises estatísticas complementares
+
+O pacote [gridsearch/analysis/](gridsearch/analysis) fornece funções de apoio à interpretação dos resultados do grid search: correlações entre hiperparâmetros e métricas (`correlations.py`), estatísticas descritivas (`statistics.py`), ranking configurável (`ranking.py`) e geração de relatórios (`report.py`).
 
 ### Artefatos gerados
 
@@ -261,7 +338,7 @@ uv run python -m main --mode grid \
     --grid-config gridsearch/config/grid_search_test.json \
     --parallel 2
 
-# Grade completa — 432 combinações (~72-108h com 2 workers)
+# Grade completa — 4.860 combinações (tempo total varia com hardware; baseline de ~1800s/exp em config['_meta'])
 uv run python -m main --mode grid \
     --grid-config gridsearch/config/grid_search.json \
     --parallel 4
@@ -293,12 +370,16 @@ analysis = analyze_results(results)
 
 | Hiperparâmetro | Valores (grade completa) |
 | --- | --- |
-| `learning_rate` | `1e-5`, `2e-5`, `3e-5`, `5e-5` |
+| `learning_rate` | `5e-6`, `1e-5`, `2e-5`, `3e-5`, `5e-5` |
 | `batch_size` | `8`, `16`, `32` |
 | `optimizer` | `adam`, `adamw`, `sgd`, `bert_adam` |
 | `dropout` | `0.1`, `0.2`, `0.3` |
 | `seed` | `42`, `123`, `456` |
-| **Total** | **432 combinações** |
+| `max_seq_length` | `128`, `256`, `512` |
+| `num_epochs` | `2`, `3`, `5` |
+| **Total** | **4.860 combinações** |
+
+> Para explorar apenas o impacto na qualidade preditiva com menor custo, prefira `gridsearch/config/grid_search_quality.json` (grade reduzida).
 
 Artefatos gerados
 
@@ -326,15 +407,21 @@ uso de RAM (MB) e F1-score de validação.
 ├── 📄 pyproject.toml          Dependências e entrypoints
 ├── 📄 compose.yaml            Ambiente containerizado
 ├── 📄 Dockerfile              Imagem base do projeto
+├── 📁 cli/                    CLI (Command Pattern): parser, comandos e runners
 ├── 📁 config/                 Configurações em cascata
 ├── 📁 model/                  Modelos LM
-├── 📁 formatter/              Preparação de inputs
-├── 📁 dataset/                DataLoaders
+├── 📁 formatter/               Preparação de inputs
+├── 📁 dataset/                DataLoaders (locais e HuggingFace Hub)
 ├── 📁 tools/                  Treino, Avaliação e Inferência
 ├── 📁 scripts/                Entrypoints CLI
-├── 📁 gridsearch/             Módulo de busca em grid
+├── 📁 gridsearch/             Módulo de busca em grid, Skyband e análise de SLA
+│   ├── core.py / grid.py / executor.py / protocols.py   Motor de grid search
+│   ├── dominance.py / comparison.py / visualization.py  Pareto / Skyband
+│   ├── tiers.py                                         Discretização PSLA4ML
+│   ├── sla_prefilter.py                                 Perfis e pré-filtro de SLA
+│   └── analysis/                                        Correlações, estatísticas e ranking
 ├── 📁 utils/                  Utilitários gerais
-├── 📁 tests/                  Suite com 101 testes
+├── 📁 tests/                  Suite com 400+ testes
 ├── 📁 data/                   Dados sintéticos
 ├── 📁 examples/               Exemplos de dados
 ├── 📁 docs/                   Documentação técnica

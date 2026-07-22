@@ -44,7 +44,7 @@
   },
 
   "notes": [
-    "Grade completa (BL-05): 5 × 3 × 4 × 3 × 3 × 3 × 3 = 14.580 experimentos",
+    "Grid completo: 5 × 3 × 4 × 3 × 3 × 3 × 3 = 4.860 experimentos",
     "Tempo estimado (512 tokens, 5 épocas, batch=8): até 28.800s/exp — use --sla-constraint train_time_sec=<limite> para pré-filtrar",
     "Para explorar apenas qualidade preditiva, prefira grid_search_quality.json (9 combinações)",
     "Memória recomendada: 64GB RAM mínimo para max_seq_length=512 com parallel=2",
