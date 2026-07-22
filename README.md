@@ -78,50 +78,7 @@ uv run --group dev pytest tests/test_warmup_scheduler.py::TestSchedulerLRBehavio
 
 ## Pipeline de Funcionamento
 
-```mermaid
-flowchart TB
- subgraph ORC["① Orquestração"]
-    direction LR
-        A["main.py<br>--mode single | grid"]
-        B[["GridSearch Core<br>Process Pool · spawn"]]
-  end
- subgraph EXEC["② Execução"]
-    direction LR
-        D["init_all()  →  run_train()<br>Pipeline"]
-        E{{"CodeCarbon · psutil<br>TeeStream"}}
-  end
- subgraph RESULT["③ Resultados"]
-    direction LR
-        G["Precision · Recall · F1 · Accuracy"]
-        F[/"Makespan · CO₂ kg · kWh · USD"/]
-  end
-    A -- "mode = grid" --> B
-    A -- "mode = single" --> C(["execute_experiment()<br>Motor de Execução Central"])
-    B --> C
-    C --> D
-    C -. thread daemon .-> E
-    D --> G & F
-    E --> F
-    G --> H[("JSON por execução<br>CSV Histórico Acumulado")]
-    F --> H
-
-     A:::cli
-     B:::gridsearch
-     C:::engine
-     D:::training
-     E:::monitoring
-     G:::evaluation
-     F:::criteria
-     H:::persistence
-    classDef cli         fill:#1f6feb,stroke:#79c0ff,color:#fff,font-weight:bold
-    classDef gridsearch  fill:#6e40c9,stroke:#a371f7,color:#fff,font-weight:bold
-    classDef engine      fill:#e36209,stroke:#f0883e,color:#fff,font-weight:bold
-    classDef training    fill:#2ea043,stroke:#56d364,color:#fff,font-weight:bold
-    classDef monitoring  fill:#9a6700,stroke:#d29922,color:#fff,font-weight:bold
-    classDef criteria    fill:#8250df,stroke:#bc8cff,color:#fff,font-weight:bold
-    classDef evaluation  fill:#b91c1c,stroke:#f87171,color:#fff,font-weight:bold
-    classDef persistence fill:#0f766e,stroke:#2dd4bf,color:#fff,font-weight:bold
-```
+<img width="934" height="370" alt="PSLA4ML-SBBD" src="https://github.com/user-attachments/assets/27edddd7-9c39-4d85-853a-9353e59a30d6" />
 
 ---
 
@@ -136,7 +93,7 @@ main.py  ──(mode=single)──→  experiment/  →  tools/train_tool.py
          ──(mode=grid)────→  gridsearch/core.py  →  experiment/
 ```
 
-### Experimento único
+### Experimento Single-mode
 
 ```bash
 # Execução padrão (usa config/experiments/BertPLI.config)
@@ -149,8 +106,11 @@ uv run python -m main --mode single --config config/experiments/BertPLI2.config
 uv run python -m main --mode single --gpu 0          # GPU 0
 uv run python -m main --mode single --gpu 0 1        # GPU 0+1
 ```
+---
 
-### Grid search de hiperparâmetros
+Este repositório faz referência ao BERT-PLI, publicado no artigo da IJCAI-PRICAI 2020: *BERT-PLI: Modeling Paragraph-Level Interactions for Legal Case Retrieval*.
+
+### Experimento Grid-mode
 
 ```bash
 # Busca minimal (teste rápido — 8 combinações, 2 workers)
@@ -275,17 +235,6 @@ O JSON por experimento contém as seções:
 }
 ```
 
-### Ativando avaliação automática ao final do treino
-
-No arquivo `.config` do experimento, inclua a seção:
-
-```ini
-[eval]
-run_test_at_end = true
-
-[data]
-test_labels_file = data/task1_test_labels_2024.json
-```
 
 ### Rastreamento de Emissões de CO₂
 
@@ -317,10 +266,6 @@ ENERGY_COST_USD_PER_KWH=0.08 uv run python -m main --mode single
 
 > A variável `ENERGY_COST_USD_PER_KWH` aceita qualquer valor em ponto flutuante (USD por kWh).
 > O resultado aparece no campo `energy_cost_usd` do JSON de métricas do experimento.
-
----
-
-This repository contains the code for BERT-PLI in our IJCAI-PRICAI 2020 paper: *BERT-PLI: Modeling Paragraph-Level Interactions for Legal Case Retrieval*.
 
 ---
 
@@ -464,7 +409,7 @@ uso de RAM (MB) e F1-score de validação.
 
 ## Reprodutibilidade
 
-O projeto garante resultados reproduzíveis por meio da função `set_seed` em [utils/seed.py](utils/seed.py), que cobre todas as fontes de aleatoriedade:
+O projeto garante resultados reproduzíveis por meio da função `set_seed` em [utils/seed.py](utils/seed.py):
 
 | Camada | Mecanismo |
 | -------- | ----------- |
