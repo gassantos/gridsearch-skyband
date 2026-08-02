@@ -1,10 +1,11 @@
 import logging
-import torch
-import numpy as np
 from collections import defaultdict
 from timeit import default_timer as timer
 
-from utils.device import get_device
+import numpy as np
+import torch
+
+from utils.device import get_device, prepare_data_loader
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,7 @@ def valid(model, dataset, epoch, writer, config, gpu_list, output_function, mode
     model.eval()
 
     device = get_device()
+    dataset = prepare_data_loader(dataset, device)
 
     acc_result = None
     total_loss = 0

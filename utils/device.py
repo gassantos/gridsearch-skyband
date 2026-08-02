@@ -50,10 +50,21 @@ def _suppress_nvml_stderr():
 # ---------------------------------------------------------------------------
 try:
     import torch_xla.core.xla_model as xm  # type: ignore[import]
+    import torch_xla.distributed.parallel_loader as xla_parallel_loader  # type: ignore[import]
     _XLA_AVAILABLE = True
 except ImportError:
     xm = None  # type: ignore[assignment]
+    xla_parallel_loader = None  # type: ignore[assignment]
     _XLA_AVAILABLE = False
+
+
+def prepare_data_loader(data_loader, device):
+    """Prepara um DataLoader para transferência eficiente ao dispositivo XLA."""
+    if device is None or device.type != "xla":
+        return data_loader
+    if xla_parallel_loader is None:
+        raise RuntimeError("Dispositivo XLA selecionado, mas MpDeviceLoader não está disponível.")
+    return xla_parallel_loader.MpDeviceLoader(data_loader, device)
 
 
 def get_device(prefer_cpu: bool = False):

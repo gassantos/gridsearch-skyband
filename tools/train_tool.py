@@ -12,7 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
 
 from tools.eval_tool import gen_time_str, output_value, valid
-from utils.device import get_device, xm
+from utils.device import get_device, prepare_data_loader, xm
 from utils.paths import PathManager
 
 logger = logging.getLogger(__name__)
@@ -68,6 +68,7 @@ def train(parameters, config, gpu_list):
 
     # ── Device portável (CUDA / MPS / CPU) ──────────────────────────────────
     device = get_device()
+    dataset = prepare_data_loader(dataset, device)
 
     # ── Gradient clipping (padrão recomendado para fine-tuning de BERT) ──────
     max_grad_norm = config.getfloat("train", "max_grad_norm", fallback=1.0)
