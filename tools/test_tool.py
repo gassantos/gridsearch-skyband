@@ -1,9 +1,9 @@
 import logging
 import os
-import torch
 from timeit import default_timer as timer
 
 from tools.eval_tool import gen_time_str, output_value
+from utils.device import get_device, move_batch_to_device, prepare_data_loader
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,8 @@ def test(parameters, config, gpu_list):
     model = parameters["model"]
     dataset = parameters["test_dataset"]
     model.eval()
+    device = get_device()
+    dataset = prepare_data_loader(dataset, device)
 
     acc_result = None
     total_loss = 0
@@ -25,10 +27,7 @@ def test(parameters, config, gpu_list):
     result = []
 
     for step, data in enumerate(dataset):
-        for key in data.keys():
-            if isinstance(data[key], torch.Tensor):
-                if len(gpu_list) > 0:
-                    data[key] = data[key].cuda()
+        data = move_batch_to_device(data, device)
 
         results = model(data, config, gpu_list, acc_result, "test")
         result = result + results["output"]
