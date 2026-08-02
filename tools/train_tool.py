@@ -1,20 +1,32 @@
+import json
 import logging
-import torch
-import torch.nn as nn
+import shutil
 from pathlib import Path
+from timeit import default_timer as timer
+
+import torch
+from torch import nn
 from torch.optim import lr_scheduler
-from torch.profiler import profile, ProfilerActivity, record_function
+from torch.profiler import ProfilerActivity, profile, record_function
 from torch.utils.tensorboard import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
-import shutil
-from timeit import default_timer as timer
-import json
 
-from tools.eval_tool import valid, gen_time_str, output_value
+from tools.eval_tool import gen_time_str, output_value, valid
+from utils.device import get_device, xm
 from utils.paths import PathManager
-from utils.device import get_device
 
 logger = logging.getLogger(__name__)
+
+
+def _optimizer_step(optimizer, scaler, device):
+    if device.type == "xla":
+        if xm is None:
+            raise RuntimeError("Dispositivo XLA selecionado, mas torch_xla não está disponível.")
+        xm.optimizer_step(optimizer, barrier=True)
+        return
+
+    scaler.step(optimizer)
+    scaler.update()
 
 
 def checkpoint(filename, model, optimizer, trained_epoch, config, global_step, warmup_scheduler=None):
@@ -32,7 +44,7 @@ def checkpoint(filename, model, optimizer, trained_epoch, config, global_step, w
     try:
         torch.save(save_params, filename)
     except Exception as e:
-        logger.warning("Cannot save models with error %s, continue anyway" % str(e))
+        logger.warning(f"Cannot save models with error {str(e)}, continue anyway")
 
 
 def train(parameters, config, gpu_list):
@@ -173,8 +185,7 @@ def train(parameters, config, gpu_list):
             # Gradient clipping (desescala antes de clipar quando AMP está ativo)
             scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
-            scaler.step(optimizer)
-            scaler.update()
+            _optimizer_step(optimizer, scaler, device)
             if warmup_scheduler is not None:
                 warmup_scheduler.step()
 
