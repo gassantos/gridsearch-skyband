@@ -1,14 +1,12 @@
-# -*- coding: utf-8 -*-
 __author__ = 'yshao'
 
 
-import logging
-import torch
 import json
-
+import logging
 from timeit import default_timer as timer
 
 from tools.eval_tool import gen_time_str, output_value
+from utils.device import get_device, move_batch_to_device, prepare_data_loader
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +28,7 @@ def load_state_keywise(model, pretrained_dict):
             tmp_cnt += 1
         else:
             continue
-    logger.info('tot #para=%d, load from pretrained #paras=%d' % (len(model_dict), tmp_cnt))
+    logger.info(f"tot #para={len(model_dict)}, load from pretrained #paras={tmp_cnt}")
     model.load_state_dict(model_dict)
     return model
 
@@ -39,6 +37,8 @@ def pool_out(parameters, config, gpu_list, _outname):
     model = parameters["model"]
     dataset = parameters["test_dataset"]
     model.eval()
+    device = get_device()
+    dataset = prepare_data_loader(dataset, device)
 
     acc_result = None
     total_loss = 0
@@ -53,10 +53,7 @@ def pool_out(parameters, config, gpu_list, _outname):
     result = []
 
     for step, data in enumerate(dataset):
-        for key in data.keys():
-            if isinstance(data[key], torch.Tensor):
-                if len(gpu_list) > 0:
-                    data[key] = data[key].cuda()
+        data = move_batch_to_device(data, device)
 
         results = model(data, config, gpu_list, acc_result, "poolout")
         result = result + results["output"]
@@ -87,7 +84,7 @@ def pool_out(parameters, config, gpu_list, _outname):
 
     delta_t = timer() - start_time
     output_info = "Pool_Out"
-    output_value(0, "poolout", "%d/%d" % (step + 1, total_len), "%s/%s" % (
+    output_value(0, "poolout", "%d/%d" % (step + 1, total_len), "{}/{}".format(
         gen_time_str(delta_t), gen_time_str(delta_t * (total_len - step - 1) / (step + 1))),
                  "%.3lf" % (total_loss / (step + 1)), output_info, None, config)
 

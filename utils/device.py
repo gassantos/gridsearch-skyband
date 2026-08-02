@@ -5,13 +5,13 @@ Suporta CUDA (NVIDIA), TPU (TorchXLA), MPS (Apple Silicon) e CPU.
 from __future__ import annotations
 
 import contextlib
-import os
-import sys
-import platform
 import logging
+import os
+import platform
+import sys
+
 import psutil
 import torch
-
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,14 @@ def prepare_data_loader(data_loader, device):
     if xla_parallel_loader is None:
         raise RuntimeError("Dispositivo XLA selecionado, mas MpDeviceLoader não está disponível.")
     return xla_parallel_loader.MpDeviceLoader(data_loader, device)
+
+
+def move_batch_to_device(batch, device):
+    """Move os tensores de um batch para o dispositivo selecionado."""
+    for key, value in batch.items():
+        if isinstance(value, torch.Tensor):
+            batch[key] = value.to(device)
+    return batch
 
 
 def get_device(prefer_cpu: bool = False):
