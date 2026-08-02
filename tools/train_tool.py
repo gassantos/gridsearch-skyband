@@ -18,6 +18,20 @@ from utils.paths import PathManager
 logger = logging.getLogger(__name__)
 
 
+def _configure_mixed_precision(device, precision):
+    if device.type == "xla" and precision == "fp16":
+        raise ValueError("TPU/XLA não suporta fp16 neste pipeline; use precision=bf16 ou fp32.")
+
+    use_amp = precision in ("fp16", "bf16") and device.type in ("cuda", "cpu", "xla")
+    amp_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
+    scaler_device = device.type if device.type in ("cuda", "cpu") else "cpu"
+    scaler = torch.amp.GradScaler(
+        scaler_device,
+        enabled=use_amp and precision == "fp16" and device.type != "xla",
+    )
+    return use_amp, amp_dtype, scaler
+
+
 def _optimizer_step(optimizer, scaler, device):
     if device.type == "xla":
         if xm is None:
@@ -75,9 +89,7 @@ def train(parameters, config, gpu_list):
 
     # ── Mixed Precision (AMP) ────────────────────────────────────────────────
     precision = config.get("environment", "precision", fallback="fp32")
-    use_amp = precision in ("fp16", "bf16") and device.type in ("cuda", "cpu")
-    amp_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
-    scaler = torch.amp.GradScaler(device.type, enabled=(use_amp and precision == "fp16"))
+    use_amp, amp_dtype, scaler = _configure_mixed_precision(device, precision)
     if use_amp:
         logger.info("AMP habilitado: dtype=%s, GradScaler=%s", amp_dtype, scaler.is_enabled())
 
