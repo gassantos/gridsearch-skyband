@@ -43,7 +43,28 @@ def _optimizer_step(optimizer, scaler, device):
     scaler.update()
 
 
-def checkpoint(filename, model, optimizer, trained_epoch, config, global_step, warmup_scheduler=None):
+def _save_checkpoint(save_params, filename, device=None):
+    if device is not None and device.type == "xla":
+        if xm is None:
+            raise RuntimeError("Dispositivo XLA selecionado, mas torch_xla não está disponível.")
+        xm.mark_step()
+        xm.wait_device_ops()
+        xm.save(save_params, filename, master_only=True)
+        return
+
+    torch.save(save_params, filename)
+
+
+def checkpoint(
+    filename,
+    model,
+    optimizer,
+    trained_epoch,
+    config,
+    global_step,
+    warmup_scheduler=None,
+    device=None,
+):
     model_to_save = model.module if hasattr(model, 'module') else model
     save_params = {
         "model": model_to_save.state_dict(),
@@ -56,7 +77,7 @@ def checkpoint(filename, model, optimizer, trained_epoch, config, global_step, w
         save_params["warmup_scheduler"] = warmup_scheduler.state_dict()
 
     try:
-        torch.save(save_params, filename)
+        _save_checkpoint(save_params, filename, device)
     except Exception as e:
         logger.warning(f"Cannot save models with error {str(e)}, continue anyway")
 
@@ -159,7 +180,7 @@ def train(parameters, config, gpu_list):
         should_profile = (current_epoch == trained_epoch)
         
         for step, data in enumerate(dataset):
-            for key in data.keys():
+            for key in data:
                 if isinstance(data[key], torch.Tensor):
                     data[key] = data[key].to(device)
 
@@ -221,7 +242,7 @@ def train(parameters, config, gpu_list):
                     "%.3lf" % (total_loss / (step + 1)), output_info, None, config)
 
         checkpoint(str(output_path / f"{current_epoch}.pkl"), model, optimizer, current_epoch, config,
-                   global_step, warmup_scheduler=warmup_scheduler)
+                   global_step, warmup_scheduler=warmup_scheduler, device=device)
         writer.add_scalar(config.get("output", "model_name") + "_train_epoch", float(total_loss) / (step + 1),
                           current_epoch)
 
