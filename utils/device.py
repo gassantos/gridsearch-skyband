@@ -75,6 +75,23 @@ def move_batch_to_device(batch, device):
     return batch
 
 
+def validate_xla_batch_shape(batch, expected_signature=None):
+    """Valida que os tensores dos batches XLA mantêm formas e tipos estáticos."""
+    signature = tuple(
+        sorted(
+            (key, tuple(value.shape), str(value.dtype))
+            for key, value in batch.items()
+            if isinstance(value, torch.Tensor)
+        )
+    )
+    if expected_signature is not None and signature != expected_signature:
+        raise RuntimeError(
+            "Forma dinâmica detectada no treino XLA. Use padding até max_seq_length, "
+            "limites fixos de parágrafos e drop_last=True."
+        )
+    return signature
+
+
 def get_device(prefer_cpu: bool = False):
     """
     Detecta o melhor dispositivo disponível de forma multiplataforma.

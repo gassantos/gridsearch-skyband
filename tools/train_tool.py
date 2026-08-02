@@ -12,7 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
 
 from tools.eval_tool import gen_time_str, output_value, valid
-from utils.device import get_device, prepare_data_loader, xm
+from utils.device import get_device, prepare_data_loader, validate_xla_batch_shape, xm
 from utils.paths import PathManager
 
 logger = logging.getLogger(__name__)
@@ -166,6 +166,7 @@ def train(parameters, config, gpu_list):
     total_len = len(dataset)
     if total_len < 10000:
         pass
+    xla_batch_signature = None
     for epoch_num in range(trained_epoch, epoch):
         start_time = timer()
         current_epoch = epoch_num
@@ -177,12 +178,14 @@ def train(parameters, config, gpu_list):
         step = -1
         
         # Profile first 3 batches of first epoch for FLOPs measurement
-        should_profile = (current_epoch == trained_epoch)
+        should_profile = current_epoch == trained_epoch and device.type != "xla"
         
         for step, data in enumerate(dataset):
             for key in data:
                 if isinstance(data[key], torch.Tensor):
                     data[key] = data[key].to(device)
+            if device.type == "xla":
+                xla_batch_signature = validate_xla_batch_shape(data, xla_batch_signature)
 
             optimizer.zero_grad()
 
