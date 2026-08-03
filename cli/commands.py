@@ -50,6 +50,7 @@ class SingleCommand(Command):
             dataset_overrides=_build_dataset_overrides(args),
             gpu_list=args.gpu,
             tpu_cores=args.tpu_cores,
+            precision=args.precision,
         )
         if not args.no_skyband:
             # require_state=False: modo single não gera estado de grid search;
@@ -80,6 +81,7 @@ class GridCommand(Command):
             dataset_overrides=_build_dataset_overrides(args),
             gpu_ids=args.gpu,
             tpu_cores=args.tpu_cores,
+            precision=args.precision,
         )
         if not args.no_skyband:
             run_skyband_analysis(

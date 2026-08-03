@@ -71,6 +71,7 @@ def execute_experiment(
     parallel_workers: int = 1,
     train_file: str | None = None,
     dataset_overrides: dict | None = None,
+    environment_overrides: dict | None = None,
     *,
     environment_cost_per_hour_usd: float | None = None,
     init_fn: InitFn | None = None,
@@ -92,6 +93,7 @@ def execute_experiment(
         parallel_workers: Número de workers paralelos.
         train_file: Nome do arquivo de treino sem extensão.
         dataset_overrides: Chaves da seção ``[data]`` a sobrescrever.
+        environment_overrides: Chaves da seção ``[environment]`` a sobrescrever.
         environment_cost_per_hour_usd: Custo horário do ambiente de nuvem
             (ex: CPU=$0.10/h, GPU=$1.20/h, TPU=$1.50/h). Quando fornecido,
             usa a fórmula PSLA4ML: ``cost_usd = (train_time_sec/3600) × rate``.
@@ -110,9 +112,9 @@ def execute_experiment(
     _torch_device_info = get_torch_device()
     device_name = _torch_device_info['name']
 
-    # Aplica train_file e/ou dataset_overrides criando um config temporário
+    # Aplica overrides criando um config temporário por worker.
     _temp_config_path: str | None = None
-    if train_file is not None or dataset_overrides:
+    if train_file is not None or dataset_overrides or environment_overrides:
         _base_cfg = load_config(config_path)
         if not _base_cfg.has_section("data"):
             _base_cfg.add_section("data")
@@ -122,6 +124,11 @@ def execute_experiment(
             for key, value in dataset_overrides.items():
                 section = "data"
                 _base_cfg.set(section, key, str(value))
+        if environment_overrides:
+            if not _base_cfg.has_section("environment"):
+                _base_cfg.add_section("environment")
+            for key, value in environment_overrides.items():
+                _base_cfg.set("environment", key, str(value))
         _fd, _temp_config_path = _tempfile.mkstemp(suffix=".config")
         os.close(_fd)
         with open(_temp_config_path, "w") as _f:

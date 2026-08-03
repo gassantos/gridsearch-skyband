@@ -63,6 +63,14 @@ def test_cli_accepts_tpu_core_count():
     assert args.tpu_cores == 8
 
 
+def test_cli_accepts_bf16_precision_override():
+    from cli.parser import build_argument_parser
+
+    args = build_argument_parser().parse_args(["--precision", "bf16"])
+
+    assert args.precision == "bf16"
+
+
 def test_grid_rejects_nested_parallelism(tmp_path):
     from gridsearch.executor import run_grid_search
 

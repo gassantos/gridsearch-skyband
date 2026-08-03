@@ -153,13 +153,14 @@ export PJRT_DEVICE=TPU
 
 uv run python -m main --mode single \
     --config config/experiments/BertPLI.config \
+    --precision bf16 \
     --tpu-cores 8 \
     --no-skyband
 
 uv run python -m scripts.homologate_tpu --expected-cores 8
 ```
 
-O último comando homologa o BL-08 somente quando o experimento termina com sucesso, registra `device_type=TPU`, usa os oito workers PJRT e contém contagens positivas de `CompileTime` e `ExecuteTime`. Em grid TPU multicore, use `--parallel 1`; o paralelismo ocorre entre os cores TPU dentro de cada experimento.
+O override `--precision bf16` é obrigatório nesse exemplo porque o baseline `BertPLI.config` usa FP16, formato não suportado por este pipeline em XLA. O último comando homologa o BL-08 somente quando o experimento termina com sucesso, registra `device_type=TPU`, usa os oito workers PJRT e contém contagens positivas de `CompileTime` e `ExecuteTime`. Em grid TPU multicore, use `--parallel 1`; o paralelismo ocorre entre os cores TPU dentro de cada experimento.
 
 ### Dataset via HuggingFace Hub ou JSONL local
 

@@ -174,6 +174,13 @@ Configurações padrão:
     )
 
     parser.add_argument(
+        "--precision",
+        choices=["fp32", "fp16", "bf16"],
+        default=None,
+        help="Sobrescreve environment.precision do arquivo de configuração.",
+    )
+
+    parser.add_argument(
         "--train-dataset",
         type=str,
         choices=["train_task2", "train_task2_v2", "train_task2_v3"],

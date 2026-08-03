@@ -92,6 +92,7 @@ def run_single_experiment(
     dataset_overrides: dict[str, str] | None = None,
     cloud_cost_per_hour_usd: float | None = None,
     tpu_cores: int = 1,
+    environment_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     Executa um único experimento e retorna os resultados.
@@ -110,6 +111,7 @@ def run_single_experiment(
             Quando fornecido, ``execute_experiment`` usa a fórmula PSLA4ML:
             ``cost_usd = (train_time_sec / 3600) × cloud_cost_per_hour_usd``.
             ``None`` mantém o cálculo por tarifa flat de energia.
+        environment_overrides: Chaves da seção ``[environment]`` a sobrescrever.
 
     Returns:
         Dicionário com resultados do experimento
@@ -126,6 +128,7 @@ def run_single_experiment(
             gpu_list=gpu_list,
             parallel_workers=parallel_workers,
             dataset_overrides=dataset_overrides,
+            environment_overrides=environment_overrides,
             environment_cost_per_hour_usd=cloud_cost_per_hour_usd,
             tpu_cores=tpu_cores,
         )
@@ -181,6 +184,7 @@ def run_grid_search(
     output_dir: Path | None = None,
     env_cost_registry: dict[str, float] | None = None,
     tpu_cores: int = 1,
+    environment_overrides: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Executa busca em grade completa.
@@ -209,6 +213,7 @@ def run_grid_search(
             usar a fórmula PSLA4ML: ``cost_usd = (train_time_sec/3600) × rate``.
             ``None`` mantém o cálculo por tarifa flat de energia para todos
             os experimentos.
+        environment_overrides: Chaves da seção ``[environment]`` a sobrescrever.
 
     Returns:
         Lista com resultados de todos os experimentos
@@ -335,6 +340,7 @@ def run_grid_search(
                     dataset_overrides,
                     _cost_for_params(params),
                     tpu_cores,
+                    environment_overrides,
                 ): idx
                 for idx, cfg, params in pending_experiments
             }
@@ -368,6 +374,7 @@ def run_grid_search(
                 dataset_overrides=dataset_overrides,
                 cloud_cost_per_hour_usd=_cost_for_params(params),
                 tpu_cores=tpu_cores,
+                environment_overrides=environment_overrides,
             )
             all_results.append(result)
             completed_experiments.add(idx)

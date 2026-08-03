@@ -58,6 +58,7 @@ def run_single_experiment(
     dataset_overrides: dict[str, str] | None = None,
     gpu_list: list[int] | None = None,
     tpu_cores: int = 1,
+    precision: str | None = None,
 ):
     """
     Executa um único experimento.
@@ -67,6 +68,7 @@ def run_single_experiment(
         train_dataset: Nome do arquivo de treino sem extensão.
         dataset_overrides: Chaves da seção ``[data]`` a sobrescrever no config.
         gpu_list: IDs das GPUs a utilizar (None = detecção automática).
+        precision: Precisão que sobrescreve ``[environment] precision``.
     """
     # Import lazy para evitar inicialização de CUDA no processo principal
     from experiment.xla_launcher import launch_experiment
@@ -91,6 +93,7 @@ def run_single_experiment(
         parallel_workers=1,
         train_file=train_dataset if train_dataset != DEFAULT_TRAIN_DATASET else None,
         dataset_overrides=dataset_overrides,
+        environment_overrides={"precision": precision} if precision else None,
         tpu_cores=tpu_cores,
     )
     logger.info("Experimento concluído com sucesso!")
@@ -178,7 +181,7 @@ def _load_sla_profile(profile_name: str) -> dict[str, float]:
 def run_skyband_analysis(
     k: int = 1,
     sla_constraints: dict[str, float] | None = None,
-    sla_profile_name: Optional[str] = None,
+    sla_profile_name: str | None = None,
     metrics: list[str] | None = None,
     compare: bool = False,
     state_file: str | None = None,
@@ -331,6 +334,7 @@ def run_grid_search_experiments(
     dataset_overrides: dict[str, str] | None = None,
     gpu_ids: list[int] | None = None,
     tpu_cores: int = 1,
+    precision: str | None = None,
 ):
     """
     Executa grid search de hiperparâmetros.
@@ -345,6 +349,7 @@ def run_grid_search_experiments(
         train_dataset: Nome do arquivo de treino sem extensão.
         dataset_overrides: Chaves da seção ``[data]`` a sobrescrever.
         gpu_ids: IDs das GPUs para distribuição round-robin (None = auto).
+        precision: Precisão que sobrescreve ``[environment] precision``.
     """
     from .sla_summary import _emit_sla_execution_summary, _load_latest_grid_state
 
@@ -419,6 +424,7 @@ def run_grid_search_experiments(
         dataset_overrides=dataset_overrides,
         env_cost_registry=env_cost_registry or None,
         tpu_cores=tpu_cores,
+        environment_overrides={"precision": precision} if precision else None,
     )
 
     logger.info("Grid search concluído com sucesso!")
