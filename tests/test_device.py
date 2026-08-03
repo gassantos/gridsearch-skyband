@@ -78,7 +78,8 @@ class TestGetDevice:
     def test_cpu_fallback_when_no_gpu(self):
         """Retorna device 'cpu' quando CUDA e MPS não estão disponíveis."""
         with patch("torch.cuda.is_available", return_value=False), \
-             patch("platform.system", return_value="Linux"):
+             patch("platform.system", return_value="Linux"), \
+             patch.object(dev, "_XLA_AVAILABLE", False):
             device = dev.get_device()
         assert device is not None
         assert device.type == "cpu"
@@ -92,7 +93,8 @@ class TestGetDevice:
 
         with patch("torch.cuda.is_available", return_value=False), \
              patch("platform.system", return_value="Darwin"), \
-             patch("torch.backends", mock_backends):
+               patch("torch.backends", mock_backends), \
+               patch.object(dev, "_XLA_AVAILABLE", False):
             device = dev.get_device()
         assert device is not None
         assert device.type == "mps"
@@ -106,7 +108,8 @@ class TestGetDevice:
 
         with patch("torch.cuda.is_available", return_value=False), \
              patch("platform.system", return_value="Darwin"), \
-             patch("torch.backends", mock_backends):
+               patch("torch.backends", mock_backends), \
+               patch.object(dev, "_XLA_AVAILABLE", False):
             device = dev.get_device()
         assert device is not None
         assert device.type == "cpu"
@@ -244,7 +247,8 @@ class TestGetTorchDevice:
     def test_gpu_branch_when_cuda_available(self):
         """Retorna type='GPU' e device cuda quando CUDA disponível."""
         with patch("torch.cuda.is_available", return_value=True), \
-             patch("torch.cuda.get_device_name", return_value="Mock GPU"):
+             patch("torch.cuda.get_device_name", return_value="Mock GPU"), \
+             patch.object(dev, "_XLA_AVAILABLE", False):
             result = dev.get_torch_device()
         assert result["type"] == "GPU"
         assert result["device"].type == "cuda"  # type: ignore[union-attr]
