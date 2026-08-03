@@ -24,23 +24,25 @@ from pathlib import Path
 import psutil
 import torch
 
-from utils.device import get_torch_device
-from utils.util import print_system_info
+from gridsearch.protocols import (
+    ComputeMetricsFn,
+    ConvertTestResultsFn,
+    InitFn,
+    TrainFn,
+)
+from tools.eval_tool import (
+    compute_metrics as _default_compute_metrics,
+)
 
 # Imports concretos de tools/ — usados como defaults quando nenhum
 # callable alternativo é injetado via parâmetros (DIP).
 from tools.eval_tool import (
     convert_test_results_to_task1 as _default_convert_test_results,
-    compute_metrics as _default_compute_metrics,
 )
+from utils.device import get_torch_device
+from utils.util import print_system_info
 
-from gridsearch.protocols import (
-    InitFn,
-    TrainFn,
-    ConvertTestResultsFn,
-    ComputeMetricsFn,
-)
-
+from .evaluation import extract_eval_metrics
 from .helpers import (
     TeeStream,
     compute_cost_usd,
@@ -48,9 +50,8 @@ from .helpers import (
     load_config,
     now_iso,
 )
-from .tpu_check import check_tpu_acceleration
-from .evaluation import extract_eval_metrics
 from .persistence import append_csv_row, build_result_dict, write_json_result
+from .tpu_check import check_tpu_acceleration
 
 try:
     from codecarbon import EmissionsTracker
@@ -58,6 +59,7 @@ except ImportError:
     EmissionsTracker = None
 
 from warnings import filterwarnings
+
 filterwarnings("ignore", category=UserWarning)
 
 logger = logging.getLogger(__name__)
@@ -75,6 +77,8 @@ def execute_experiment(
     train_fn: TrainFn | None = None,
     convert_results_fn: ConvertTestResultsFn | None = None,
     compute_metrics_fn: ComputeMetricsFn | None = None,
+    xla_rank: int | None = None,
+    xla_world_size: int = 1,
 ) -> None:
     """Executa um experimento completo de forma rastreável.
 
@@ -96,6 +100,8 @@ def execute_experiment(
         train_fn: Callable compatível com ``TrainFn`` protocol.
         convert_results_fn: Callable compatível com ``ConvertTestResultsFn``.
         compute_metrics_fn: Callable compatível com ``ComputeMetricsFn``.
+        xla_rank: Rank PJRT do worker atual; ``None`` fora do launcher XLA.
+        xla_world_size: Quantidade de workers PJRT usados pelo experimento.
     """
     import tempfile as _tempfile
 
@@ -137,23 +143,24 @@ def execute_experiment(
 
     experiment_id = str(uuid.uuid4())
     device_type = _torch_device_info['type']
+    is_primary_process = xla_rank in (None, 0)
 
     # Sincroniza o CUDA para garantir que as medições de tempo sejam precisas
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     start_time = time.perf_counter()
     start_iso = now_iso()
-    DATE_EXEC = datetime.now().strftime("%Y%m%d_%H%M%S")
+    DATE_EXEC = datetime.timetz.now().strftime("%Y%m%d_%H%M%S")
 
     # -------- ENERGY TRACKER --------
     tracker = None
-    if EmissionsTracker and mon.getboolean("enable_monitoring"):
+    if is_primary_process and EmissionsTracker and mon.getboolean("enable_monitoring"):
         from .helpers import METRICS_DIR
         tracker = EmissionsTracker(
             project_name=exp["name"],
             output_dir=METRICS_DIR.as_posix(),
             log_level="error",
-            output_file=f"EmissionsCO2_{device_type}_{datetime.now().strftime('%Y%m%d')}.csv"
+            output_file=f"EmissionsCO2_{device_type}_{datetime.timetz.now().strftime('%Y%m%d')}.csv"
         )
         tracker.start()
 
@@ -218,6 +225,15 @@ def execute_experiment(
             except OSError:
                 pass
 
+    if xla_world_size > 1:
+        from utils.device import xm
+
+        if xm is None:
+            raise RuntimeError("Worker PJRT iniciado sem runtime torch_xla disponível.")
+        xm.rendezvous("bl08_experiment_complete")
+        if not is_primary_process:
+            return
+
     # -------- STOP ENERGY TRACKER --------
     emissions_kg = None
     energy_kwh = None
@@ -238,9 +254,7 @@ def execute_experiment(
     end_iso = now_iso()
 
     # -------- TPU ACCELERATION CHECK (BL-08) --------
-    # Detecta execução silenciosa na host CPU quando device_type é TPU mas o
-    # MXU não foi ativado (gpu_energy ≈ 0 nos dados do CodeCarbon).
-    # Cf. Seção 4 do artigo PSLA4ML: "gpu_power = 0,0 W e device_type = CPU".
+    # Usa métricas nativas do runtime XLA; CodeCarbon permanece como telemetria.
     tpu_check = check_tpu_acceleration(
         device_type=device_type,
         tracker=tracker,
@@ -305,6 +319,7 @@ def execute_experiment(
         device_name=device_name,
         precision=env["precision"],
         parallel_workers=parallel_workers,
+        xla_world_size=xla_world_size,
         train_dataset_name=_train_dataset_name,
         optimizer=train["optimizer"],
         learning_rate=float(train["learning_rate"]),

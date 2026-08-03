@@ -1,23 +1,95 @@
+import json
 import logging
-import torch
-import torch.nn as nn
+import shutil
 from pathlib import Path
+from timeit import default_timer as timer
+
+import torch
+from torch import nn
 from torch.optim import lr_scheduler
-from torch.profiler import profile, ProfilerActivity, record_function
+from torch.profiler import ProfilerActivity, profile, record_function
 from torch.utils.tensorboard import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
-import shutil
-from timeit import default_timer as timer
-import json
 
-from tools.eval_tool import valid, gen_time_str, output_value
+from tools.eval_tool import gen_time_str, output_value, valid
+from utils.device import (
+    get_device,
+    prepare_data_loader,
+    set_data_loader_epoch,
+    validate_xla_batch_shape,
+    xm,
+)
 from utils.paths import PathManager
-from utils.device import get_device
 
 logger = logging.getLogger(__name__)
 
 
-def checkpoint(filename, model, optimizer, trained_epoch, config, global_step, warmup_scheduler=None):
+class _NullSummaryWriter:
+    def add_scalar(self, *args, **kwargs):
+        return None
+
+
+def _is_primary_process(device):
+    return device.type != "xla" or xm is None or xm.is_master_ordinal(local=False)
+
+
+def _distributed_validation_loss(value, device, epoch):
+    if device.type != "xla" or xm is None:
+        return value
+    return xm.mesh_reduce(
+        f"validation_loss_{epoch}",
+        value,
+        lambda values: sum(values) / len(values),
+    )
+
+
+def _configure_mixed_precision(device, precision):
+    if device.type == "xla" and precision == "fp16":
+        raise ValueError("TPU/XLA não suporta fp16 neste pipeline; use precision=bf16 ou fp32.")
+
+    use_amp = precision in ("fp16", "bf16") and device.type in ("cuda", "cpu", "xla")
+    amp_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
+    scaler_device = device.type if device.type in ("cuda", "cpu") else "cpu"
+    scaler = torch.amp.GradScaler(
+        scaler_device,
+        enabled=use_amp and precision == "fp16" and device.type != "xla",
+    )
+    return use_amp, amp_dtype, scaler
+
+
+def _optimizer_step(optimizer, scaler, device):
+    if device.type == "xla":
+        if xm is None:
+            raise RuntimeError("Dispositivo XLA selecionado, mas torch_xla não está disponível.")
+        xm.optimizer_step(optimizer, barrier=True)
+        return
+
+    scaler.step(optimizer)
+    scaler.update()
+
+
+def _save_checkpoint(save_params, filename, device=None):
+    if device is not None and device.type == "xla":
+        if xm is None:
+            raise RuntimeError("Dispositivo XLA selecionado, mas torch_xla não está disponível.")
+        xm.mark_step()
+        xm.wait_device_ops()
+        xm.save(save_params, filename, master_only=True)
+        return
+
+    torch.save(save_params, filename)
+
+
+def checkpoint(
+    filename,
+    model,
+    optimizer,
+    trained_epoch,
+    config,
+    global_step,
+    warmup_scheduler=None,
+    device=None,
+):
     model_to_save = model.module if hasattr(model, 'module') else model
     save_params = {
         "model": model_to_save.state_dict(),
@@ -30,9 +102,9 @@ def checkpoint(filename, model, optimizer, trained_epoch, config, global_step, w
         save_params["warmup_scheduler"] = warmup_scheduler.state_dict()
 
     try:
-        torch.save(save_params, filename)
+        _save_checkpoint(save_params, filename, device)
     except Exception as e:
-        logger.warning("Cannot save models with error %s, continue anyway" % str(e))
+        logger.warning(f"Cannot save models with error {e!s}, continue anyway")
 
 
 def train(parameters, config, gpu_list):
@@ -56,15 +128,14 @@ def train(parameters, config, gpu_list):
 
     # ── Device portável (CUDA / MPS / CPU) ──────────────────────────────────
     device = get_device()
+    dataset = prepare_data_loader(dataset, device)
 
     # ── Gradient clipping (padrão recomendado para fine-tuning de BERT) ──────
     max_grad_norm = config.getfloat("train", "max_grad_norm", fallback=1.0)
 
     # ── Mixed Precision (AMP) ────────────────────────────────────────────────
     precision = config.get("environment", "precision", fallback="fp32")
-    use_amp = precision in ("fp16", "bf16") and device.type in ("cuda", "cpu")
-    amp_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
-    scaler = torch.amp.GradScaler(device.type, enabled=(use_amp and precision == "fp16"))
+    use_amp, amp_dtype, scaler = _configure_mixed_precision(device, precision)
     if use_amp:
         logger.info("AMP habilitado: dtype=%s, GradScaler=%s", amp_dtype, scaler.is_enabled())
 
@@ -77,12 +148,16 @@ def train(parameters, config, gpu_list):
 
     tensorboard_path = Path(config.get("output", "tensorboard_path")) / config.get("output", "model_name")
     
-    if trained_epoch == 0:
+    if trained_epoch == 0 and _is_primary_process(device):
         shutil.rmtree(tensorboard_path, ignore_errors=True)
 
     PathManager.ensure_dir(tensorboard_path)
 
-    writer = SummaryWriter(str(tensorboard_path), config.get("output", "model_name"))
+    writer = (
+        SummaryWriter(str(tensorboard_path), config.get("output", "model_name"))
+        if _is_primary_process(device)
+        else _NullSummaryWriter()
+    )
 
     step_size = config.getint("train", "step_size")
     gamma = config.getfloat("train", "lr_multiplier")
@@ -120,7 +195,9 @@ def train(parameters, config, gpu_list):
     total_len = len(dataset)
     if total_len < 10000:
         pass
+    xla_batch_signature = None
     for epoch_num in range(trained_epoch, epoch):
+        set_data_loader_epoch(dataset, epoch_num)
         start_time = timer()
         current_epoch = epoch_num
 
@@ -131,12 +208,14 @@ def train(parameters, config, gpu_list):
         step = -1
         
         # Profile first 3 batches of first epoch for FLOPs measurement
-        should_profile = (current_epoch == trained_epoch)
+        should_profile = current_epoch == trained_epoch and device.type != "xla"
         
         for step, data in enumerate(dataset):
-            for key in data.keys():
+            for key in data:
                 if isinstance(data[key], torch.Tensor):
                     data[key] = data[key].to(device)
+            if device.type == "xla":
+                xla_batch_signature = validate_xla_batch_shape(data, xla_batch_signature)
 
             optimizer.zero_grad()
 
@@ -173,8 +252,7 @@ def train(parameters, config, gpu_list):
             # Gradient clipping (desescala antes de clipar quando AMP está ativo)
             scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
-            scaler.step(optimizer)
-            scaler.update()
+            _optimizer_step(optimizer, scaler, device)
             if warmup_scheduler is not None:
                 warmup_scheduler.step()
 
@@ -197,7 +275,7 @@ def train(parameters, config, gpu_list):
                     "%.3lf" % (total_loss / (step + 1)), output_info, None, config)
 
         checkpoint(str(output_path / f"{current_epoch}.pkl"), model, optimizer, current_epoch, config,
-                   global_step, warmup_scheduler=warmup_scheduler)
+                   global_step, warmup_scheduler=warmup_scheduler, device=device)
         writer.add_scalar(config.get("output", "model_name") + "_train_epoch", float(total_loss) / (step + 1),
                           current_epoch)
 
@@ -207,7 +285,11 @@ def train(parameters, config, gpu_list):
                                  output_function)
                 # ── Early Stopping check ────────────────────────────────────────
                 if es_patience > 0 and eval_res is not None:
-                    val_loss = eval_res.get("loss", float("inf"))
+                    val_loss = _distributed_validation_loss(
+                        eval_res.get("loss", float("inf")),
+                        device,
+                        current_epoch,
+                    )
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
                         es_counter = 0

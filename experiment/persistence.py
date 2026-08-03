@@ -12,7 +12,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .helpers import METRICS_DIR
 
@@ -39,19 +39,20 @@ def build_result_dict(
     batch_size: int,
     epoch: int,
     exec_time: float,
-    energy_kwh: Optional[float],
-    emissions_kg: Optional[float],
-    cost_usd: Optional[float],
-    avg_ram: Optional[float],
-    peak_ram: Optional[float],
+    energy_kwh: float | None,
+    emissions_kg: float | None,
+    cost_usd: float | None,
+    avg_ram: float | None,
+    peak_ram: float | None,
     total_gflops: float,
-    eval_metrics: Dict[str, Any],
+    eval_metrics: dict[str, Any],
     stdout: str,
     stderr: str,
     tpu_check: Any = None,
-) -> Dict[str, Any]:
+    xla_world_size: int = 1,
+) -> dict[str, Any]:
     """Constrói o dicionário padronizado de resultado de um experimento."""
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "experiment": {
             "id": experiment_id,
             "config_name": json_filename,
@@ -68,6 +69,7 @@ def build_result_dict(
         },
         "execution": {
             "parallel_workers": parallel_workers,
+            "xla_world_size": xla_world_size,
             "train_dataset": train_dataset_name,
         },
         "hyperparameters": {
@@ -107,7 +109,7 @@ def build_result_dict(
     return result
 
 
-def write_json_result(result: Dict[str, Any], json_filename: str) -> Path:
+def write_json_result(result: dict[str, Any], json_filename: str) -> Path:
     """Escreve o dicionário de resultado em arquivo JSON."""
     json_path = METRICS_DIR / json_filename
     with open(json_path, "w") as f:
@@ -128,21 +130,21 @@ def append_csv_row(
     batch_size: int,
     epoch: int,
     exec_time: float,
-    energy_kwh: Optional[float],
-    emissions_kg: Optional[float],
-    cost_usd: Optional[float],
-    avg_ram: Optional[float],
-    peak_ram: Optional[float],
+    energy_kwh: float | None,
+    emissions_kg: float | None,
+    cost_usd: float | None,
+    avg_ram: float | None,
+    peak_ram: float | None,
     avg_gflops_per_batch: float,
     total_gflops: float,
     status: str,
     end_iso: str,
-    eval_metrics: Dict[str, Any],
+    eval_metrics: dict[str, Any],
 ) -> Path:
     """Acrescenta uma linha no CSV acumulado de sumário."""
     csv_filename = (
         f"experiment_summary_{device_type}"
-        f"{datetime.now().strftime('%Y%m%d')}.csv"
+        f"{datetime.timetz.now().strftime('%Y%m%d')}.csv"
     )
     csv_path = METRICS_DIR / csv_filename
     write_header = not csv_path.exists()

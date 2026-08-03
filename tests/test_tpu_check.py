@@ -17,17 +17,16 @@ Coberturas:
     - backward compat: tpu_check=None não altera o resultado
 """
 
-import pytest
-from dataclasses import dataclass
-from typing import Any, Optional
-from unittest.mock import MagicMock, PropertyMock
+from typing import Any
+from unittest.mock import MagicMock
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Mocks de tracker CodeCarbon
 # ---------------------------------------------------------------------------
 
-def _mock_tracker(gpu_energy_kwh: Optional[float]) -> Any:
+def _mock_tracker(gpu_energy_kwh: None | float) -> Any:
     """Cria um mock do EmissionsTracker com final_emissions_data.gpu_energy."""
     tracker = MagicMock()
     if gpu_energy_kwh is None:
@@ -64,7 +63,8 @@ class TestTpuAccelerationStatus:
         d = TpuAccelerationStatus().to_dict()
         expected = {
             "device_type", "is_tpu_environment", "xla_available",
-            "gpu_energy_kwh", "accelerator_active", "warning", "recommendations",
+            "gpu_energy_kwh", "xla_runtime_metrics", "accelerator_active",
+            "warning", "recommendations",
         }
         assert set(d.keys()) == expected
 
@@ -106,6 +106,43 @@ class TestXlaAvailable:
         from experiment import tpu_check as tc
         result = tc._xla_available()
         assert result is False
+
+
+class TestXlaRuntimeMetrics:
+        def test_collects_compile_execute_and_mark_step_counts(self, monkeypatch):
+                from experiment import tpu_check
+
+                report = """
+Metric: CompileTime
+    TotalSamples: 2
+Metric: ExecuteTime
+    TotalSamples: 12
+Counter: MarkStep
+    Value: 10
+"""
+                metrics_module = MagicMock()
+                metrics_module.metrics_report.return_value = report
+                monkeypatch.setattr(tpu_check.importlib, "import_module", lambda _: metrics_module)
+
+                result = tpu_check.collect_xla_runtime_metrics()
+
+                assert result["available"] is True
+                assert result["compile_count"] == 2
+                assert result["execute_count"] == 12
+                assert result["mark_step_count"] == 10
+
+        def test_returns_unavailable_when_xla_metrics_cannot_be_imported(self, monkeypatch):
+                from experiment import tpu_check
+
+                def raise_import_error(_):
+                        raise ImportError("torch_xla unavailable")
+
+                monkeypatch.setattr(tpu_check.importlib, "import_module", raise_import_error)
+
+                result = tpu_check.collect_xla_runtime_metrics()
+
+                assert result["available"] is False
+                assert result["execute_count"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -159,11 +196,17 @@ class TestCheckTpuAcceleration:
         assert status.warning is None
         assert status.accelerator_active is True
 
-    def test_tpu_with_active_gpu_energy_no_warning(self):
-        """TPU com gpu_energy > 0 → acelerador ativo."""
-        from experiment.tpu_check import check_tpu_acceleration
+    def test_tpu_with_xla_execution_no_warning(self, monkeypatch):
+        """ExecuteTime > 0 comprova XLA mesmo quando energia não é conclusiva."""
+        from experiment import tpu_check
+        monkeypatch.setattr(tpu_check, "_xla_available", lambda: True)
         tracker = _mock_tracker(gpu_energy_kwh=0.09)
-        status = check_tpu_acceleration("TPU", tracker=tracker, exec_time_sec=3600.0)
+        status = tpu_check.check_tpu_acceleration(
+            "TPU",
+            tracker=tracker,
+            exec_time_sec=3600.0,
+            xla_runtime_metrics={"available": True, "compile_count": 1, "execute_count": 10},
+        )
         assert status.is_tpu_environment is True
         assert status.accelerator_active is True
         assert status.warning is None
@@ -178,14 +221,40 @@ class TestCheckTpuAcceleration:
         assert status.accelerator_active is False
         assert status.warning is not None
         assert "BL-08" in status.warning
-        assert "host CPU" in status.warning
+        assert "runtime XLA" in status.warning
+
+    def test_positive_energy_without_xla_execution_is_not_active(self, monkeypatch):
+        from experiment import tpu_check
+        monkeypatch.setattr(tpu_check, "_xla_available", lambda: True)
+
+        status = tpu_check.check_tpu_acceleration(
+            "TPU",
+            tracker=_mock_tracker(gpu_energy_kwh=0.5),
+            xla_runtime_metrics={"available": True, "compile_count": 0, "execute_count": 0},
+        )
+
+        assert status.gpu_energy_kwh == pytest.approx(0.5)
+        assert status.accelerator_active is False
+
+    def test_zero_energy_with_xla_execution_is_active(self, monkeypatch):
+        from experiment import tpu_check
+        monkeypatch.setattr(tpu_check, "_xla_available", lambda: True)
+
+        status = tpu_check.check_tpu_acceleration(
+            "TPU",
+            tracker=_mock_tracker(gpu_energy_kwh=0.0),
+            xla_runtime_metrics={"available": True, "compile_count": 1, "execute_count": 5},
+        )
+
+        assert status.gpu_energy_kwh == pytest.approx(0.0)
+        assert status.accelerator_active is True
 
     def test_tpu_warning_contains_exec_time(self):
         from experiment.tpu_check import check_tpu_acceleration
         tracker = _mock_tracker(gpu_energy_kwh=0.0)
         status = check_tpu_acceleration("TPU", tracker=tracker, exec_time_sec=3634.15)
         # Verifica que o exec_time aparece no aviso (arredondado para 1 casa decimal)
-        assert "3634" in status.warning
+        assert "3634" in status.warning # type: ignore
 
     def test_tpu_warning_has_recommendations(self):
         from experiment.tpu_check import check_tpu_acceleration
@@ -224,6 +293,7 @@ class TestCheckTpuAcceleration:
     def test_result_is_serializable(self):
         """TpuAccelerationStatus.to_dict() deve ser JSON-serializável."""
         import json
+
         from experiment.tpu_check import check_tpu_acceleration
         tracker = _mock_tracker(gpu_energy_kwh=0.0)
         status = check_tpu_acceleration("TPU", tracker=tracker, exec_time_sec=100.0)
@@ -251,35 +321,35 @@ class TestCheckTpuAcceleration:
 
 class TestBuildResultDictWithTpuCheck:
     def _base_kwargs(self):
-        return dict(
-            experiment_id="test-uuid",
-            json_filename="test.json",
-            seed=42,
-            status="success",
-            date_exec="20260715_120000",
-            start_iso="2026-07-15T12:00:00+00:00",
-            end_iso="2026-07-15T13:00:00+00:00",
-            device_type="CPU",
-            device_name="AMD EPYC",
-            precision="fp16",
-            parallel_workers=1,
-            train_dataset_name="train_task2",
-            optimizer="adam",
-            learning_rate=1e-5,
-            avg_gflops_per_batch=100.0,
-            batch_size=8,
-            epoch=3,
-            exec_time=100.0,
-            energy_kwh=0.01,
-            emissions_kg=0.001,
-            cost_usd=0.001,
-            avg_ram=4096.0,
-            peak_ram=5120.0,
-            total_gflops=1000.0,
-            eval_metrics={},
-            stdout="output",
-            stderr="",
-        )
+        return {
+            "experiment_id": "test-uuid",
+            "json_filename": "test.json",
+            "seed": 42,
+            "status": "success",
+            "date_exec": "20260715_120000",
+            "start_iso": "2026-07-15T12:00:00+00:00",
+            "end_iso": "2026-07-15T13:00:00+00:00",
+            "device_type": "CPU",
+            "device_name": "AMD EPYC",
+            "precision": "fp16",
+            "parallel_workers": 1,
+            "train_dataset_name": "train_task2",
+            "optimizer": "adam",
+            "learning_rate": 1e-5,
+            "avg_gflops_per_batch": 100.0,
+            "batch_size": 8,
+            "epoch": 3,
+            "exec_time": 100.0,
+            "energy_kwh": 0.01,
+            "emissions_kg": 0.001,
+            "cost_usd": 0.001,
+            "avg_ram": 4096.0,
+            "peak_ram": 5120.0,
+            "total_gflops": 1000.0,
+            "eval_metrics": {},
+            "stdout": "output",
+            "stderr": "",
+        }
 
     def test_without_tpu_check_no_extra_key(self):
         from experiment.persistence import build_result_dict
