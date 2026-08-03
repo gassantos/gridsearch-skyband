@@ -150,7 +150,7 @@ def execute_experiment(
         torch.cuda.synchronize()
     start_time = time.perf_counter()
     start_iso = now_iso()
-    DATE_EXEC = datetime.timetz.now().strftime("%Y%m%d_%H%M%S")
+    DATE_EXEC = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # -------- ENERGY TRACKER --------
     tracker = None
@@ -160,7 +160,7 @@ def execute_experiment(
             project_name=exp["name"],
             output_dir=METRICS_DIR.as_posix(),
             log_level="error",
-            output_file=f"EmissionsCO2_{device_type}_{datetime.timetz.now().strftime('%Y%m%d')}.csv"
+            output_file=f"EmissionsCO2_{device_type}_{datetime.now().strftime('%Y%m%d')}.csv"
         )
         tracker.start()
 

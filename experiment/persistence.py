@@ -144,7 +144,7 @@ def append_csv_row(
     """Acrescenta uma linha no CSV acumulado de sumário."""
     csv_filename = (
         f"experiment_summary_{device_type}"
-        f"{datetime.timetz.now().strftime('%Y%m%d')}.csv"
+        f"{datetime.now().strftime('%Y%m%d')}.csv"
     )
     csv_path = METRICS_DIR / csv_filename
     write_header = not csv_path.exists()

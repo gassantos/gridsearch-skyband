@@ -29,7 +29,7 @@ from .utils import check_memory_availability, ensure_output_directories
 
 logger = logging.getLogger(__name__)
 
-_TDATE = datetime.timetz.now().strftime("%Y-%m-%d")
+_TDATE = datetime.now().strftime("%Y-%m-%d")
 _LOGFILE = PathManager.LOGS_DIR / f"grid_search_{_TDATE}.log"
 
 # Device cache (lazy, evita NVML em CPU-only)
@@ -405,7 +405,7 @@ def save_state(
         output_dir: Diretório de saída (Path). None = default do módulo.
     """
     state = {
-        "timestamp": datetime.timetz.now().isoformat(),
+        "timestamp": datetime.now().isoformat(),
         "completed_experiments": list(completed_experiments),
         "results": results,
         "sla_prefilter": sla_prefilter_info or {
