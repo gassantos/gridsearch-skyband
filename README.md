@@ -142,6 +142,25 @@ uv run python -m main --mode grid \
 > **Pré-filtro SLA:** em modo `grid`, `--sla-profile` e `--sla-constraint` agora também filtram combinações antes da execução quando a constraint é estimável. Hoje isso vale diretamente para `peak_ram_mb` e para `train_time_sec` quando o JSON da grade expõe uma baseline de tempo em `_meta.time_estimation` ou no fallback `_meta.per_experiment_train_time_sec`. No grid multiambiente, a estimativa pode usar o baseline específico de cada ambiente.
 > **Grid multiambiente:** quando `environments.active` está presente no JSON, o grid executa o produto `hyperparameters × environments`, adicionando o campo de ambiente aos parâmetros de cada experimento.
 
+### TPU multicore no Google Colab
+
+Selecione um runtime TPU no Colab e execute, a partir do clone do repositório:
+
+```bash
+pip install uv
+uv sync --extra tpu --group dev
+export PJRT_DEVICE=TPU
+
+uv run python -m main --mode single \
+    --config config/experiments/BertPLI.config \
+    --tpu-cores 8 \
+    --no-skyband
+
+uv run python -m scripts.homologate_tpu --expected-cores 8
+```
+
+O último comando homologa o BL-08 somente quando o experimento termina com sucesso, registra `device_type=TPU`, usa os oito workers PJRT e contém contagens positivas de `CompileTime` e `ExecuteTime`. Em grid TPU multicore, use `--parallel 1`; o paralelismo ocorre entre os cores TPU dentro de cada experimento.
+
 ### Dataset via HuggingFace Hub ou JSONL local
 
 Além dos datasets em `data/` referenciados pelo `.config`, o CLI aceita fontes alternativas via `--dataset-source`, sobrescrevendo o `DataLoader` configurado:
