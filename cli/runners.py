@@ -13,13 +13,13 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
-from gridsearch.core import run_grid_search, GRID_OUTPUT_DIR
+from gridsearch.core import GRID_OUTPUT_DIR, run_grid_search
 from gridsearch.skyband import (
+    DEFAULT_METRICS,
     compare_skyband_vs_ranking,
     skyband_report,
-    DEFAULT_METRICS,
 )
 
 from .constants import DEFAULT_SLA_PROFILES, DEFAULT_TRAIN_DATASET
@@ -27,7 +27,7 @@ from .constants import DEFAULT_SLA_PROFILES, DEFAULT_TRAIN_DATASET
 logger = logging.getLogger(__name__)
 
 
-def validate_paths(config_path: str, grid_config_path: Optional[str] = None) -> bool:
+def validate_paths(config_path: str, grid_config_path: str | None = None) -> bool:
     """
     Valida se os caminhos de configuração existem.
 
@@ -55,8 +55,9 @@ def validate_paths(config_path: str, grid_config_path: Optional[str] = None) -> 
 def run_single_experiment(
     config_path: str,
     train_dataset: str = DEFAULT_TRAIN_DATASET,
-    dataset_overrides: Optional[Dict[str, str]] = None,
-    gpu_list: Optional[List[int]] = None,
+    dataset_overrides: dict[str, str] | None = None,
+    gpu_list: list[int] | None = None,
+    tpu_cores: int = 1,
 ):
     """
     Executa um único experimento.
@@ -68,7 +69,7 @@ def run_single_experiment(
         gpu_list: IDs das GPUs a utilizar (None = detecção automática).
     """
     # Import lazy para evitar inicialização de CUDA no processo principal
-    from experiment import execute_experiment
+    from experiment.xla_launcher import launch_experiment
 
     logger.info("=" * 70)
     logger.info("MODO: Experimento Único")
@@ -84,17 +85,18 @@ def run_single_experiment(
     if not validate_paths(config_path):
         sys.exit(1)
 
-    execute_experiment(
-        config_path,
+    launch_experiment(
+        config_path=config_path,
         gpu_list=gpu_list,
         parallel_workers=1,
         train_file=train_dataset if train_dataset != DEFAULT_TRAIN_DATASET else None,
         dataset_overrides=dataset_overrides,
+        tpu_cores=tpu_cores,
     )
     logger.info("Experimento concluído com sucesso!")
 
 
-def _build_dataset_overrides(args) -> Optional[Dict[str, str]]:
+def _build_dataset_overrides(args) -> dict[str, str] | None:
     """Constrói o dict de overrides de [data] a partir dos args CLI HF.
 
     Retorna ``None`` se nenhum argumento HF foi informado.
@@ -102,7 +104,7 @@ def _build_dataset_overrides(args) -> Optional[Dict[str, str]]:
     if not args.dataset_source:
         return None
 
-    overrides: Dict[str, str] = {
+    overrides: dict[str, str] = {
         "hf_dataset_source": args.dataset_source,
         "train_dataset_type": "HuggingFace",
         "valid_dataset_type": "HuggingFace",
@@ -116,7 +118,7 @@ def _build_dataset_overrides(args) -> Optional[Dict[str, str]]:
     return overrides
 
 
-def _parse_sla_constraints(constraint_list: Optional[list]) -> dict:
+def _parse_sla_constraints(constraint_list: list[str] | None) -> dict[str, float]:
     """
     Converte a lista de strings "metrica=valor" em dicionário de constraints.
 
@@ -145,7 +147,7 @@ def _parse_sla_constraints(constraint_list: Optional[list]) -> dict:
     return constraints
 
 
-def _load_sla_profile(profile_name: str) -> dict:
+def _load_sla_profile(profile_name: str) -> dict[str, float]:
     """
     Carrega um perfil de SLA do arquivo de perfis padrão.
 
@@ -175,11 +177,11 @@ def _load_sla_profile(profile_name: str) -> dict:
 
 def run_skyband_analysis(
     k: int = 1,
-    sla_constraints: Optional[dict] = None,
+    sla_constraints: dict[str, float] | None = None,
     sla_profile_name: Optional[str] = None,
-    metrics: Optional[list] = None,
+    metrics: list[str] | None = None,
     compare: bool = False,
-    state_file: Optional[str] = None,
+    state_file: str | None = None,
     require_state: bool = True,
 ) -> None:
     """
@@ -257,9 +259,9 @@ def run_skyband_analysis(
             logger.error(str(exc))
             sys.exit(1)
 
-        sla_constraints = {m: v for m, v in profile["constraints"].items() if v is not None}
-        k = profile["skyband_k"]
-        metrics = profile["metrics"]
+        sla_constraints = {m: v for m, v in profile["constraints"].items() if v is not None} # type: ignore
+        k = profile["skyband_k"] # type: ignore
+        metrics = profile["metrics"] # type: ignore
         logger.info(
             "Perfil SLA '%s' carregado: k=%d, metrics=%s, constraints=%s",
             sla_profile_name, k, metrics, sla_constraints,
@@ -323,11 +325,12 @@ def run_grid_search_experiments(
     grid_config_path: str,
     parallel: int = 1,
     resume: bool = False,
-    sla_profile_name: Optional[str] = None,
-    sla_constraints: Optional[dict] = None,
+    sla_profile_name: None | str = None,
+    sla_constraints: dict[str, float] | None = None,
     train_dataset: str = DEFAULT_TRAIN_DATASET,
-    dataset_overrides: Optional[Dict[str, str]] = None,
-    gpu_ids: Optional[List[int]] = None,
+    dataset_overrides: dict[str, str] | None = None,
+    gpu_ids: list[int] | None = None,
+    tpu_cores: int = 1,
 ):
     """
     Executa grid search de hiperparâmetros.
@@ -343,7 +346,7 @@ def run_grid_search_experiments(
         dataset_overrides: Chaves da seção ``[data]`` a sobrescrever.
         gpu_ids: IDs das GPUs para distribuição round-robin (None = auto).
     """
-    from .sla_summary import _load_latest_grid_state, _emit_sla_execution_summary
+    from .sla_summary import _emit_sla_execution_summary, _load_latest_grid_state
 
     logger.info("=" * 70)
     logger.info("MODO: Grid Search")
@@ -358,6 +361,8 @@ def run_grid_search_experiments(
 
     if not validate_paths(base_config_path, grid_config_path):
         sys.exit(1)
+    if tpu_cores > 1 and parallel > 1:
+        raise ValueError("TPU multicore requer --parallel 1 para evitar spawn aninhado.")
 
     # Carrega configuração da grade
     with open(grid_config_path, 'r', encoding='utf-8') as f:
@@ -373,7 +378,7 @@ def run_grid_search_experiments(
 
         execution_sla_constraints = {
             metric: value
-            for metric, value in profile.get("constraints", {}).items()
+            for metric, value in profile.get("constraints", {}).items() # type: ignore
             if value is not None
         }
         logger.info(
@@ -389,7 +394,7 @@ def run_grid_search_experiments(
 
     # Extrai custo horário por ambiente (fórmula PSLA4ML: cost_usd = t/3600 × rate)
     # Presente em grid_search_multienv.json → environments.details.*.cost_per_hour_usd
-    env_cost_registry: Dict[str, float] = {
+    env_cost_registry: dict[str, float] = {
         name: float(details.get("cost_per_hour_usd", 0.0))
         for name, details in (
             grid_config.get("environments", {}).get("details", {}).items()
@@ -413,6 +418,7 @@ def run_grid_search_experiments(
         train_dataset=train_dataset,
         dataset_overrides=dataset_overrides,
         env_cost_registry=env_cost_registry or None,
+        tpu_cores=tpu_cores,
     )
 
     logger.info("Grid search concluído com sucesso!")

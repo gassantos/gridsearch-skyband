@@ -14,21 +14,22 @@ import logging
 import os
 import sys
 import traceback
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from utils.device import get_torch_device
+from utils.log_setup import get_log_queue, setup_worker_logging
 from utils.paths import PathManager
-from utils.log_setup import setup_worker_logging, get_log_queue
-from .utils import check_memory_availability, ensure_output_directories
-from .grid import generate_parameter_grid, create_config_for_combination
+
+from .grid import create_config_for_combination, generate_parameter_grid
 from .sla_prefilter import prefilter_param_grid_by_execution_sla
+from .utils import check_memory_availability, ensure_output_directories
 
 logger = logging.getLogger(__name__)
 
-_TDATE = datetime.now().strftime("%Y-%m-%d")
+_TDATE = datetime.timetz.now().strftime("%Y-%m-%d")
 _LOGFILE = PathManager.LOGS_DIR / f"grid_search_{_TDATE}.log"
 
 # Device cache (lazy, evita NVML em CPU-only)
@@ -85,12 +86,13 @@ def _grid_summary_file(output_dir: Path | None = None):
 def run_single_experiment(
     experiment_idx: int,
     config_path: str,
-    params: Dict[str, Any],
-    gpu_list: List[int] | None = None,
+    params: dict[str, Any],
+    gpu_list: list[int] | None = None,
     parallel_workers: int = 1,
-    dataset_overrides: Dict[str, str] | None = None,
-    cloud_cost_per_hour_usd: Optional[float] = None,
-) -> Dict[str, Any]:
+    dataset_overrides: dict[str, str] | None = None,
+    cloud_cost_per_hour_usd: float | None = None,
+    tpu_cores: int = 1,
+) -> dict[str, Any]:
     """
     Executa um único experimento e retorna os resultados.
 
@@ -113,18 +115,19 @@ def run_single_experiment(
         Dicionário com resultados do experimento
     """
     # Import lazy para evitar inicialização de CUDA no processo principal
-    from experiment import execute_experiment
+    from experiment.xla_launcher import launch_experiment
 
     logger.info(f"[{experiment_idx}] Iniciando experimento com parâmetros: {params}")
 
     try:
         # Executa experimento nas GPUs designadas
-        execute_experiment(
-            config_path,
+        launch_experiment(
+            config_path=config_path,
             gpu_list=gpu_list,
             parallel_workers=parallel_workers,
             dataset_overrides=dataset_overrides,
             environment_cost_per_hour_usd=cloud_cost_per_hour_usd,
+            tpu_cores=tpu_cores,
         )
 
         # Coleta resultados do arquivo JSON mais recente gerado
@@ -150,7 +153,7 @@ def run_single_experiment(
         return result_data
 
     except Exception as e:
-        logger.error(f"[{experiment_idx}] Erro no experimento: {str(e)}")
+        logger.error(f"[{experiment_idx}] Erro no experimento: {e!s}")
         logger.debug(traceback.format_exc())
 
         return {
@@ -168,16 +171,17 @@ def run_single_experiment(
 
 def run_grid_search(
     base_config_path: str,
-    grid_config: Dict[str, List[Any]],
+    grid_config: dict[str, list[Any]],
     resume: bool = False,
     parallel: int = 1,
-    gpu_ids: List[int] | None = None,
-    execution_sla_constraints: Optional[Dict[str, float]] = None,
+    gpu_ids: list[int] | None = None,
+    execution_sla_constraints: dict[str, float] | None = None,
     train_dataset: str = "train_task2",
-    dataset_overrides: Dict[str, str] | None = None,
+    dataset_overrides: dict[str, str] | None = None,
     output_dir: Path | None = None,
-    env_cost_registry: Optional[Dict[str, float]] = None,
-) -> List[Dict[str, Any]]:
+    env_cost_registry: dict[str, float] | None = None,
+    tpu_cores: int = 1,
+) -> list[dict[str, Any]]:
     """
     Executa busca em grade completa.
 
@@ -210,6 +214,8 @@ def run_grid_search(
         Lista com resultados de todos os experimentos
     """
     output_dir = _resolve_output_dir(output_dir)
+    if tpu_cores > 1 and parallel > 1:
+        raise ValueError("TPU multicore requer parallel=1 para evitar spawn aninhado.")
 
     # Carrega estado anterior se existir
     completed_experiments = set()
@@ -287,18 +293,18 @@ def run_grid_search(
 
     # Distribui GPUs entre workers em round-robin (um worker → uma GPU)
     import torch as _torch
-    _available_gpus: List[int] = (
+    _available_gpus: list[int] = (
         gpu_ids
         if gpu_ids is not None
         else list(range(_torch.cuda.device_count()))
     )
-    def _gpu_for(idx: int) -> List[int] | None:
+    def _gpu_for(idx: int) -> list[int] | None:
         """Retorna [gpu_id] para o worker `idx`, ou None quando não há GPUs."""
         if not _available_gpus:
             return None
         return [_available_gpus[idx % len(_available_gpus)]]
 
-    def _cost_for_params(params: Dict[str, Any]) -> Optional[float]:
+    def _cost_for_params(params: dict[str, Any]) -> float | None:
         """Retorna cost_per_hour_usd do ambiente selecionado, ou None.
 
         Usado para aplicar a fórmula PSLA4ML no cálculo de custo:
@@ -328,6 +334,7 @@ def run_grid_search(
                     idx, cfg, params, _gpu_for(idx), parallel,
                     dataset_overrides,
                     _cost_for_params(params),
+                    tpu_cores,
                 ): idx
                 for idx, cfg, params in pending_experiments
             }
@@ -360,6 +367,7 @@ def run_grid_search(
                 parallel_workers=parallel,
                 dataset_overrides=dataset_overrides,
                 cloud_cost_per_hour_usd=_cost_for_params(params),
+                tpu_cores=tpu_cores,
             )
             all_results.append(result)
             completed_experiments.add(idx)
@@ -384,8 +392,8 @@ def run_grid_search(
 
 def save_state(
     completed_experiments: set,
-    results: List[Dict[str, Any]],
-    sla_prefilter_info: Optional[Dict[str, Any]] = None,
+    results: list[dict[str, Any]],
+    sla_prefilter_info: dict[str, Any] | None = None,
     output_dir: Path | None = None,
 ):
     """Salva estado da execução para permitir retomada.
@@ -394,10 +402,10 @@ def save_state(
         completed_experiments: Índices dos experimentos já concluídos.
         results: Lista de resultados acumulados.
         sla_prefilter_info: Informações do pré-filtro SLA.
-        output_dir: Diretório de saída (DIP). None = default do módulo.
+        output_dir: Diretório de saída (Path). None = default do módulo.
     """
     state = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.timetz.now().isoformat(),
         "completed_experiments": list(completed_experiments),
         "results": results,
         "sla_prefilter": sla_prefilter_info or {

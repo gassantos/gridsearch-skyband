@@ -44,6 +44,9 @@ Exemplos de uso:
   # Grid search paralelo com 4 workers
   python -m main --mode grid --parallel 4
 
+    # Experimento usando todos os 8 cores de uma TPU no Colab
+    python -m main --mode single --tpu-cores 8
+
   # Retomar grid search interrompido (Skyband roda ao final)
   python -m main --mode grid --resume
 
@@ -156,6 +159,17 @@ Configurações padrão:
             "IDs das GPUs a utilizar. "
             "Sem valor = detecção automática. "
             "Ex: --gpu 0  (single GPU), --gpu 0 1  (multi-GPU)"
+        ),
+    )
+
+    parser.add_argument(
+        "--tpu-cores",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Número de cores TPU para execução PJRT (padrão: 1). "
+            "Use 8 no Colab TPU; requer --parallel 1 no modo grid."
         ),
     )
 

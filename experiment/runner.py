@@ -77,6 +77,8 @@ def execute_experiment(
     train_fn: TrainFn | None = None,
     convert_results_fn: ConvertTestResultsFn | None = None,
     compute_metrics_fn: ComputeMetricsFn | None = None,
+    xla_rank: int | None = None,
+    xla_world_size: int = 1,
 ) -> None:
     """Executa um experimento completo de forma rastreável.
 
@@ -98,6 +100,8 @@ def execute_experiment(
         train_fn: Callable compatível com ``TrainFn`` protocol.
         convert_results_fn: Callable compatível com ``ConvertTestResultsFn``.
         compute_metrics_fn: Callable compatível com ``ComputeMetricsFn``.
+        xla_rank: Rank PJRT do worker atual; ``None`` fora do launcher XLA.
+        xla_world_size: Quantidade de workers PJRT usados pelo experimento.
     """
     import tempfile as _tempfile
 
@@ -139,6 +143,7 @@ def execute_experiment(
 
     experiment_id = str(uuid.uuid4())
     device_type = _torch_device_info['type']
+    is_primary_process = xla_rank in (None, 0)
 
     # Sincroniza o CUDA para garantir que as medições de tempo sejam precisas
     if torch.cuda.is_available():
@@ -149,7 +154,7 @@ def execute_experiment(
 
     # -------- ENERGY TRACKER --------
     tracker = None
-    if EmissionsTracker and mon.getboolean("enable_monitoring"):
+    if is_primary_process and EmissionsTracker and mon.getboolean("enable_monitoring"):
         from .helpers import METRICS_DIR
         tracker = EmissionsTracker(
             project_name=exp["name"],
@@ -219,6 +224,15 @@ def execute_experiment(
                 os.unlink(_temp_config_path)
             except OSError:
                 pass
+
+    if xla_world_size > 1:
+        from utils.device import xm
+
+        if xm is None:
+            raise RuntimeError("Worker PJRT iniciado sem runtime torch_xla disponível.")
+        xm.rendezvous("bl08_experiment_complete")
+        if not is_primary_process:
+            return
 
     # -------- STOP ENERGY TRACKER --------
     emissions_kg = None
@@ -305,6 +319,7 @@ def execute_experiment(
         device_name=device_name,
         precision=env["precision"],
         parallel_workers=parallel_workers,
+        xla_world_size=xla_world_size,
         train_dataset_name=_train_dataset_name,
         optimizer=train["optimizer"],
         learning_rate=float(train["learning_rate"]),
