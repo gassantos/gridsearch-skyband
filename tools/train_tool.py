@@ -12,10 +12,35 @@ from torch.utils.tensorboard import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
 
 from tools.eval_tool import gen_time_str, output_value, valid
-from utils.device import get_device, prepare_data_loader, validate_xla_batch_shape, xm
+from utils.device import (
+    get_device,
+    prepare_data_loader,
+    set_data_loader_epoch,
+    validate_xla_batch_shape,
+    xm,
+)
 from utils.paths import PathManager
 
 logger = logging.getLogger(__name__)
+
+
+class _NullSummaryWriter:
+    def add_scalar(self, *args, **kwargs):
+        return None
+
+
+def _is_primary_process(device):
+    return device.type != "xla" or xm is None or xm.is_master_ordinal(local=False)
+
+
+def _distributed_validation_loss(value, device, epoch):
+    if device.type != "xla" or xm is None:
+        return value
+    return xm.mesh_reduce(
+        f"validation_loss_{epoch}",
+        value,
+        lambda values: sum(values) / len(values),
+    )
 
 
 def _configure_mixed_precision(device, precision):
@@ -79,7 +104,7 @@ def checkpoint(
     try:
         _save_checkpoint(save_params, filename, device)
     except Exception as e:
-        logger.warning(f"Cannot save models with error {str(e)}, continue anyway")
+        logger.warning(f"Cannot save models with error {e!s}, continue anyway")
 
 
 def train(parameters, config, gpu_list):
@@ -123,12 +148,16 @@ def train(parameters, config, gpu_list):
 
     tensorboard_path = Path(config.get("output", "tensorboard_path")) / config.get("output", "model_name")
     
-    if trained_epoch == 0:
+    if trained_epoch == 0 and _is_primary_process(device):
         shutil.rmtree(tensorboard_path, ignore_errors=True)
 
     PathManager.ensure_dir(tensorboard_path)
 
-    writer = SummaryWriter(str(tensorboard_path), config.get("output", "model_name"))
+    writer = (
+        SummaryWriter(str(tensorboard_path), config.get("output", "model_name"))
+        if _is_primary_process(device)
+        else _NullSummaryWriter()
+    )
 
     step_size = config.getint("train", "step_size")
     gamma = config.getfloat("train", "lr_multiplier")
@@ -168,6 +197,7 @@ def train(parameters, config, gpu_list):
         pass
     xla_batch_signature = None
     for epoch_num in range(trained_epoch, epoch):
+        set_data_loader_epoch(dataset, epoch_num)
         start_time = timer()
         current_epoch = epoch_num
 
@@ -255,7 +285,11 @@ def train(parameters, config, gpu_list):
                                  output_function)
                 # ── Early Stopping check ────────────────────────────────────────
                 if es_patience > 0 and eval_res is not None:
-                    val_loss = eval_res.get("loss", float("inf"))
+                    val_loss = _distributed_validation_loss(
+                        eval_res.get("loss", float("inf")),
+                        device,
+                        current_epoch,
+                    )
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
                         es_counter = 0

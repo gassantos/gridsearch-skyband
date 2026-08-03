@@ -12,6 +12,7 @@ import sys
 
 import psutil
 import torch
+from torch.utils.data import DataLoader, DistributedSampler, RandomSampler
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +52,39 @@ def _suppress_nvml_stderr():
 try:
     import torch_xla.core.xla_model as xm  # type: ignore[import]
     import torch_xla.distributed.parallel_loader as xla_parallel_loader  # type: ignore[import]
+    import torch_xla.runtime as xr  # type: ignore[import]
     _XLA_AVAILABLE = True
 except ImportError:
     xm = None  # type: ignore[assignment]
     xla_parallel_loader = None  # type: ignore[assignment]
+    xr = None  # type: ignore[assignment]
     _XLA_AVAILABLE = False
+
+
+def _shard_data_loader(data_loader):
+    if xr is None or xr.world_size() <= 1:
+        return data_loader, None
+
+    sampler = DistributedSampler(
+        data_loader.dataset,
+        num_replicas=xr.world_size(),
+        rank=xr.global_ordinal(),
+        shuffle=isinstance(data_loader.sampler, RandomSampler),
+        drop_last=data_loader.drop_last,
+    )
+    sharded_loader = DataLoader(
+        dataset=data_loader.dataset,
+        batch_size=data_loader.batch_size,
+        sampler=sampler,
+        num_workers=data_loader.num_workers,
+        collate_fn=data_loader.collate_fn,
+        drop_last=data_loader.drop_last,
+        pin_memory=data_loader.pin_memory,
+        timeout=data_loader.timeout,
+        worker_init_fn=data_loader.worker_init_fn,
+        persistent_workers=data_loader.persistent_workers,
+    )
+    return sharded_loader, sampler
 
 
 def prepare_data_loader(data_loader, device):
@@ -64,7 +93,18 @@ def prepare_data_loader(data_loader, device):
         return data_loader
     if xla_parallel_loader is None:
         raise RuntimeError("Dispositivo XLA selecionado, mas MpDeviceLoader não está disponível.")
-    return xla_parallel_loader.MpDeviceLoader(data_loader, device)
+    data_loader, sampler = _shard_data_loader(data_loader)
+    device_loader = xla_parallel_loader.MpDeviceLoader(data_loader, device)
+    if sampler is not None:
+        device_loader._xla_distributed_sampler = sampler
+    return device_loader
+
+
+def set_data_loader_epoch(data_loader, epoch):
+    """Atualiza o embaralhamento determinístico do sampler distribuído XLA."""
+    sampler = getattr(data_loader, "_xla_distributed_sampler", None)
+    if sampler is not None:
+        sampler.set_epoch(epoch)
 
 
 def move_batch_to_device(batch, device):
