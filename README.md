@@ -1,4 +1,4 @@
-# GridSearch Skyband: Otimização de Hiperparâmetros para Modelos de Linguagem
+# PSLA4ML: SLAs Personalizados via 𝑘-Skyband para para Treino ML
 
 ![Python](https://img.shields.io/badge/python-3.12-blue?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-%E2%89%A52.9.0-EE4C2C?logo=pytorch&logoColor=white)
