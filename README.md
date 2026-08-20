@@ -6,7 +6,22 @@
 ![codecarbon](https://img.shields.io/badge/codecarbon-%E2%89%A53.2.2-4CAF50?logo=leaflet&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-400%2B%20passing-brightgreen?logo=pytest&logoColor=white)
 
-## Instalação
+# Introdução
+
+O treinamento de modelos de Aprendizado de Máquina (ML) envolve a configuração de parâmetros, hiperparâmetros e do ambiente de execução, o que resulta em tempos de execução e consumo de energia distintos. Em ambientes de nuvem, os usuários precisam definir Acordos de Nível de Serviço (SLA), escolhendo recursos computacionais com base nas características do treinamento. Neste artigo, estendemos o conceito de Personalized Service Level Agreement (PSLA), propondo o PSLA4ML, que permite especificar requisitos e obter configurações de recursos, com custos e métricas associados ao workflow de treinamento do modelo. Os PSLA4ML são gerados por meio de consultas 𝑘-Skyband, considerando múltiplas métricas, como tempo, custo financeiro , etc. A abordagem foi avaliada por meio de workflows de treinamento de modelos da família BERT, o que indica sua viabilidade.
+
+## :books: Publicação
+
+SANTOS, Gustavo; BEDO, Marcos; FROTA, Yuri; OLIVEIRA, Daniel. Definição de Acordos de Nível de Serviço Personalizados para Treinamento de Modelos via Consultas k-Skyband. In: SIMPÓSIO BRASILEIRO DE BANCO DE DADOS (SBBD), 41. , 2026, São Carlos/SP. Anais [...]. Porto Alegre: Sociedade Brasileira de Computação, 2026 . p. 43-56. ISSN 2763-8979. DOI: https://doi.org/10.5753/sbbd.2026.249138.
+* Paper: [https://sol.sbc.org.br/index.php/sbbd/article/view/43959](https://sol.sbc.org.br/index.php/sbbd/article/view/43959)
+
+## :speaker: Equipe [UFF eScience](https://uffescience.github.io/)
+
+* 👨‍🎓 [Gustavo Alexandre](http://www.linkedin.com/in/gassantos)
+* 👨‍🏫 [Prof. Daniel Oliveira](https://www2.ic.uff.br/~danielcmo/)
+* 👨‍🏫 [Prof. Yuri Abitbol](https://yuri-frota.github.io/)
+
+## Como utilizar o PSLA4ML?
 
 O projeto usa [`uv`](https://docs.astral.sh/uv/) como gerenciador de ambiente e dependências. O `requirements.txt` presente no repositório é gerado automaticamente — **não o edite diretamente**; o referencial é o `pyproject.toml`.
 
@@ -466,3 +481,10 @@ ensure_reproducibility(seed=42)
 > **Nota:** mesmo com `deterministic=True`, operações atômicas em GPU (ex.: `scatter_add`) podem introduzir variação residual em versões mais antigas do CUDA. Para eliminação total, use `ensure_reproducibility()`.
 
 ---
+
+## :speaker: Para conta
+
+* :necktie: [My LinkedIn Page](http://www.linkedin.com/in/gassantos)
+* :bookmark_tabs: [My Research Curriculum](http://lattes.cnpq.br/6269223842813109)
+* <div itemscope itemtype="https://schema.org/Person"><a itemprop="sameAs" content="https://orcid.org/0000-0002-3604-9194" href="https://orcid.org/0000-0002-3604-9194" target="orcid.widget" rel="noopener noreferrer" style="vertical-align:top;"><img src="https://orcid.org/sites/default/files/images/orcid_16x16.png" style="width:1em;margin-right:.5em;" alt="ORCID iD icon"> My Orcid</a></div>
+* :e-mail: gustavo.gassantos@gmail.com
