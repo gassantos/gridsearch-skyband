@@ -2,6 +2,7 @@
 
 import pytest
 
+from experiment.task_executor import SequentialWorkflowExecutor
 from experiment.workflow import (
     ExperimentDefinition,
     TaskDefinition,
@@ -51,3 +52,40 @@ def test_definition_rejects_duplicated_task_ids():
     task = TaskDefinition(task_id="train", name="Treino")
     with pytest.raises(ValueError, match="únicos"):
         ExperimentDefinition(name="duplicated", tasks=(task, task))
+
+
+def test_sequential_executor_records_task_metrics_and_artifacts():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(TaskDefinition(task_id="prepare", name="Preparar dados"),),
+    )
+    executor = SequentialWorkflowExecutor(
+        {"prepare": lambda: {"artifacts": {"dataset": "data.json"}}}
+    )
+
+    workflow = executor.execute(definition)
+
+    attempt = workflow.tasks[0].attempts[0]
+    assert workflow.status == "success"
+    assert attempt.status is TaskStatus.SUCCEEDED
+    assert attempt.metrics["resources"]["task_time_sec"] >= 0
+    assert attempt.artifacts == {"dataset": "data.json"}
+
+
+def test_sequential_executor_skips_task_with_failed_dependency():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(
+            TaskDefinition(task_id="first", name="Primeira"),
+            TaskDefinition(task_id="next", name="Seguinte", depends_on=("first",)),
+        ),
+    )
+    executor = SequentialWorkflowExecutor(
+        {"first": lambda: (_ for _ in ()).throw(RuntimeError("falhou")), "next": lambda: {}}
+    )
+
+    workflow = executor.execute(definition)
+
+    assert workflow.status == "failed"
+    assert workflow.tasks[0].status is TaskStatus.FAILED
+    assert workflow.tasks[1].status is TaskStatus.SKIPPED

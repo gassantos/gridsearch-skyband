@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .helpers import METRICS_DIR
+from .workflow import ExperimentRun
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,23 @@ def write_json_result(result: dict[str, Any], json_filename: str) -> Path:
     with open(json_path, "w") as f:
         json.dump(result, f, indent=2)
     return json_path
+
+
+def write_workflow_run(workflow: ExperimentRun) -> Path:
+    """Persiste o manifesto e cada tarefa de uma execução de workflow."""
+    run_dir = METRICS_DIR / "workflow_runs" / workflow.experiment_run_id
+    tasks_dir = run_dir / "tasks"
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest = workflow.to_dict()
+    with open(run_dir / "manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+
+    for task in manifest["tasks"]:
+        with open(tasks_dir / f"{task['task_id']}.json", "w", encoding="utf-8") as f:
+            json.dump(task, f, indent=2)
+
+    return run_dir
 
 
 def append_csv_row(

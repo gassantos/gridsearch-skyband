@@ -1,4 +1,11 @@
-"""Contratos de domínio para workflows monitorados por tarefa."""
+"""
+Definição de workflows conforme tarefas.
+============================================
+
+ - Define os contratos de domínio para workflows monitorados por tarefa.
+ - Fornece classes e funções para definir, executar e rastrear workflows de experimentos.
+
+"""
 
 from __future__ import annotations
 

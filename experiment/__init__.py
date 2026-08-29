@@ -25,6 +25,7 @@ from .helpers import (  # noqa: F401
     now_iso,
 )
 from .runner import execute_experiment  # noqa: F401
+from .task_executor import SequentialWorkflowExecutor  # noqa: F401
 from .workflow import (  # noqa: F401
     ExperimentDefinition,
     ExperimentRun,

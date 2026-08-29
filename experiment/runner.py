@@ -50,7 +50,12 @@ from .helpers import (
     load_config,
     now_iso,
 )
-from .persistence import append_csv_row, build_result_dict, write_json_result
+from .persistence import (
+    append_csv_row,
+    build_result_dict,
+    write_json_result,
+    write_workflow_run,
+)
 from .tpu_check import check_tpu_acceleration
 from .workflow import legacy_task_run
 
@@ -158,7 +163,7 @@ def execute_experiment(
         torch.cuda.synchronize()
     start_time = time.perf_counter()
     start_iso = now_iso()
-    DATE_EXEC = datetime.now().strftime("%Y%m%d_%H%M%S")
+    DATE_EXEC = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
 
     # -------- ENERGY TRACKER --------
     tracker = None
@@ -168,7 +173,7 @@ def execute_experiment(
             project_name=exp["name"],
             output_dir=METRICS_DIR.as_posix(),
             log_level="error",
-            output_file=f"EmissionsCO2_{device_type}_{datetime.now().strftime('%Y%m%d')}.csv"
+            output_file=f"EmissionsCO2_{device_type}_{datetime.now().astimezone().strftime('%Y%m%d')}.csv"
         )
         tracker.start()
 
@@ -218,7 +223,7 @@ def execute_experiment(
         train_fn(parameters, config, gpu_list)
         status = "success"
     except Exception as exc:
-        logger.error("Treinamento falhou: %s", exc, exc_info=True)
+        logger.error("Treinamento falhou: %s", exc, exc_info=True)  # noqa: G201
         stderr = str(exc)
     finally:
         _stop_ram.set()
@@ -253,7 +258,7 @@ def execute_experiment(
                 energy_kwh = tracker.final_emissions_data.energy_consumed
             elif hasattr(tracker, '_total_energy') and tracker._total_energy is not None:
                 energy_kwh = tracker._total_energy.kWh
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Não foi possível obter energy_kwh do tracker: %s", e)
 
     if torch.cuda.is_available():
@@ -284,7 +289,7 @@ def execute_experiment(
                 total_gflops = profiling_data.get("total_gflops", 0)
                 avg_gflops_per_batch = profiling_data.get("avg_gflops_per_batch", 0)
                 logger.info(f"Loaded profiling metrics: {avg_gflops_per_batch:.2f} GFLOPs/batch")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not load profiling metrics: {e}")
             total_gflops = estimate_bert_flops(seq_len=256)
     else:
@@ -346,9 +351,11 @@ def execute_experiment(
         stderr=stderr,
         tpu_check=tpu_check,
     )
-    result["workflow"] = legacy_task_run(result).to_dict()
+    workflow = legacy_task_run(result)
+    result["workflow"] = workflow.to_dict()
 
     write_json_result(result, json_filename)
+    write_workflow_run(workflow)
 
     # -------- CSV AGGREGATION --------
     append_csv_row(
