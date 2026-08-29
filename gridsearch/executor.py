@@ -17,7 +17,7 @@ import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from utils.device import get_torch_device
 from utils.log_setup import get_log_queue, setup_worker_logging
@@ -29,7 +29,7 @@ from .utils import check_memory_availability, ensure_output_directories
 
 logger = logging.getLogger(__name__)
 
-_TDATE = datetime.now().strftime("%Y-%m-%d")
+_TDATE = datetime.now().astimezone().strftime("%Y-%m-%d")
 _LOGFILE = PathManager.LOGS_DIR / f"grid_search_{_TDATE}.log"
 
 # Device cache (lazy, evita NVML em CPU-only)
@@ -41,7 +41,7 @@ def _get_device_type() -> str:
     global _device_type_cache
     if _device_type_cache is None:
         _device_type_cache = get_torch_device()['type']
-    return _device_type_cache
+    return str(_device_type_cache)
 
 
 # ============================================================================
