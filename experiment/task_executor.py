@@ -36,11 +36,18 @@ class SequentialWorkflowExecutor:
     def __init__(self, task_functions: Mapping[str, TaskCallable]) -> None:
         self._task_functions = task_functions
 
-    def execute(self, definition: ExperimentDefinition) -> ExperimentRun:
-        """Executa as tarefas no plano topológico e retorna o agregado observado."""
+    def execute(
+        self,
+        definition: ExperimentDefinition,
+        resume_from: ExperimentRun | None = None,
+    ) -> ExperimentRun:
+        """Executa o plano topológico, reutilizando tarefas concluídas quando informado."""
         task_runs: list[TaskRun] = []
         statuses: dict[str, TaskStatus] = {}
         task_plan = WorkflowPlanner().plan(definition)
+        previous_tasks = {
+            task.task_id: task for task in resume_from.tasks
+        } if resume_from else {}
 
         for task in task_plan:
             blocked = any(
@@ -54,11 +61,29 @@ class SequentialWorkflowExecutor:
                 statuses[task.task_id] = TaskStatus.SKIPPED
                 continue
 
+            previous = previous_tasks.get(task.task_id)
+            if previous and previous.status is TaskStatus.SUCCEEDED:
+                task_runs.append(previous)
+                statuses[task.task_id] = previous.status
+                continue
+
+            if previous and previous.status is TaskStatus.FAILED:
+                last_attempt = previous.attempts[-1] if previous.attempts else None
+                retry_allowed = (
+                    last_attempt is not None
+                    and len(previous.attempts) < task.retry_policy.max_attempts
+                    and task.retry_policy.allows_retry(last_attempt.error_type or "")
+                )
+                if not retry_allowed:
+                    task_runs.append(previous)
+                    statuses[task.task_id] = previous.status
+                    continue
+
             task_fn = self._task_functions.get(task.task_id)
             if task_fn is None:
                 raise ValueError(f"Nenhuma função registrada para a tarefa '{task.task_id}'.")
 
-            task_run = self._execute_task(task, task_fn)
+            task_run = self._execute_task(task, task_fn, previous)
             task_runs.append(task_run)
             statuses[task.task_id] = task_run.status
 
@@ -67,7 +92,7 @@ class SequentialWorkflowExecutor:
             for task in definition.tasks
         )
         return ExperimentRun(
-            experiment_run_id=str(uuid.uuid4()),
+            experiment_run_id=resume_from.experiment_run_id if resume_from else str(uuid.uuid4()),
             definition_name=definition.name,
             status="failed" if required_failed else "success",
             tasks=task_runs,
@@ -77,9 +102,23 @@ class SequentialWorkflowExecutor:
     def _execute_task(
         task,
         task_fn: TaskCallable,
+        previous: TaskRun | None = None,
     ) -> TaskRun:
-        attempts: list[TaskExecutionAttempt] = []
-        for attempt_number in range(1, task.retry_policy.max_attempts + 1):
+        attempts = list(previous.attempts) if previous else []
+        if attempts and attempts[-1].status is TaskStatus.FAILED:  # noqa: SIM102
+            if not task.retry_policy.allows_retry(attempts[-1].error_type or ""):
+                return previous # type: ignore
+
+        max_attempt_number = task.retry_policy.max_attempts
+        if attempts and attempts[-1].status in {
+            TaskStatus.CREATED,
+            TaskStatus.READY,
+            TaskStatus.RUNNING,
+            TaskStatus.SKIPPED,
+        }:
+            max_attempt_number = max(max_attempt_number, len(attempts) + 1)
+
+        for attempt_number in range(len(attempts) + 1, max_attempt_number + 1):
             attempt = SequentialWorkflowExecutor._execute_attempt(
                 task.task_id,
                 attempt_number,

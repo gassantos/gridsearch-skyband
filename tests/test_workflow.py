@@ -5,9 +5,11 @@ import pytest
 from experiment.task_executor import SequentialWorkflowExecutor
 from experiment.workflow import (
     ExperimentDefinition,
+    ExperimentRun,
     RetryPolicy,
     TaskDefinition,
     TaskExecutionAttempt,
+    TaskRun,
     TaskStatus,
     legacy_task_run,
 )
@@ -201,6 +203,111 @@ def test_sequential_executor_retries_eligible_error_type():
 def test_retry_policy_requires_positive_max_attempts():
     with pytest.raises(ValueError, match="maior ou igual a 1"):
         RetryPolicy(max_attempts=0)
+
+
+def test_sequential_executor_resume_keeps_success_and_retries_failed_task():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(
+            TaskDefinition(task_id="prepare", name="Preparar"),
+            TaskDefinition(
+                task_id="train",
+                name="Treinar",
+                depends_on=("prepare",),
+                retry_policy=RetryPolicy(max_attempts=2, retryable_error_types=("TimeoutError",)),
+            ),
+        ),
+    )
+    previous = ExperimentRun(
+        experiment_run_id="resume-1",
+        definition_name="workflow",
+        status="failed",
+        tasks=[
+            TaskRun(
+                "prepare", "Preparar", "train", TaskStatus.SUCCEEDED,
+                [TaskExecutionAttempt("prepare-1", 1, TaskStatus.SUCCEEDED)],
+            ),
+            TaskRun(
+                "train", "Treinar", "train", TaskStatus.FAILED,
+                [TaskExecutionAttempt("train-1", 1, TaskStatus.FAILED, error_type="TimeoutError")],
+            ),
+        ],
+    )
+    calls: list[str] = []
+    executor = SequentialWorkflowExecutor(
+        {
+            "prepare": lambda: calls.append("prepare") or {},
+            "train": lambda: calls.append("train") or {},
+        }
+    )
+
+    workflow = executor.execute(definition, resume_from=previous)
+
+    assert workflow.experiment_run_id == "resume-1"
+    assert calls == ["train"]
+    assert workflow.status == "success"
+    assert [attempt.attempt_number for attempt in workflow.tasks[1].attempts] == [1, 2]
+
+
+def test_sequential_executor_resume_does_not_rerun_exhausted_task():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(
+            TaskDefinition("train", "Treinar", retry_policy=RetryPolicy(max_attempts=1)),
+        ),
+    )
+    previous = ExperimentRun(
+        "resume-1",
+        "workflow",
+        "failed",
+        [
+            TaskRun(
+                "train", "Treinar", "train", TaskStatus.FAILED,
+                [TaskExecutionAttempt("train-1", 1, TaskStatus.FAILED, error_type="RuntimeError")],
+            )
+        ],
+    )
+
+    workflow = SequentialWorkflowExecutor({"train": lambda: pytest.fail("não deve executar")}).execute(
+        definition, resume_from=previous
+    )
+
+    assert workflow.status == "failed"
+    assert len(workflow.tasks[0].attempts) == 1
+
+
+def test_sequential_executor_resume_reexecutes_interrupted_task():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(TaskDefinition("train", "Treinar"),),
+    )
+    previous = ExperimentRun(
+        "resume-1",
+        "workflow",
+        "failed",
+        [
+            TaskRun(
+                "train", "Treinar", "train", TaskStatus.RUNNING,
+                [TaskExecutionAttempt("train-1", 1, TaskStatus.RUNNING)],
+            )
+        ],
+    )
+    calls = 0
+
+    def train() -> dict:
+        nonlocal calls
+        calls += 1
+        return {}
+
+    workflow = SequentialWorkflowExecutor({"train": train}).execute(
+        definition, resume_from=previous
+    )
+
+    assert workflow.status == "success"
+    assert calls == 1
+    assert [attempt.attempt_number for attempt in workflow.tasks[0].attempts] == [1, 2]
+    assert workflow.tasks[0].attempts[0].status is TaskStatus.RUNNING
+    assert workflow.tasks[0].attempts[1].status is TaskStatus.SUCCEEDED
 
 
 def test_planner_orders_dependencies_before_dependents():

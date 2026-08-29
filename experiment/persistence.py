@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .helpers import METRICS_DIR
-from .workflow import ExperimentRun
+from .workflow import ExperimentRun, TaskExecutionAttempt, TaskRun, TaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,43 @@ def write_workflow_run(workflow: ExperimentRun) -> Path:
     return run_dir
 
 
+def load_workflow_run(run_dir: Path) -> ExperimentRun:
+    """Carrega um manifesto persistido para retomada seletiva do workflow."""
+    with open(run_dir / "manifest.json", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    tasks = [
+        TaskRun(
+            task_id=task["task_id"],
+            name=task["name"],
+            task_type=task["task_type"],
+            status=TaskStatus(task["status"]),
+            attempts=[
+                TaskExecutionAttempt(
+                    attempt_id=attempt["attempt_id"],
+                    attempt_number=attempt["attempt_number"],
+                    status=TaskStatus(attempt["status"]),
+                    started_at=attempt.get("started_at"),
+                    completed_at=attempt.get("completed_at"),
+                    metrics=attempt.get("metrics", {}),
+                    artifacts=attempt.get("artifacts", {}),
+                    error=attempt.get("error"),
+                    error_type=attempt.get("error_type"),
+                )
+                for attempt in task.get("attempts", [])
+            ],
+        )
+        for task in manifest["tasks"]
+    ]
+    return ExperimentRun(
+        experiment_run_id=manifest["experiment_run_id"],
+        definition_name=manifest["definition_name"],
+        status=manifest["status"],
+        tasks=tasks,
+        schema_version=manifest.get("schema_version", "1.0"),
+    )
+
+
 def append_csv_row(
     *,
     experiment_id: str,
@@ -162,7 +199,7 @@ def append_csv_row(
     """Acrescenta uma linha no CSV acumulado de sumário."""
     csv_filename = (
         f"experiment_summary_{device_type}"
-        f"{datetime.now().strftime('%Y%m%d')}.csv"
+        f"{datetime.now().astimezone().strftime('%Y%m%d')}.csv"
     )
     csv_path = METRICS_DIR / csv_filename
     write_header = not csv_path.exists()
