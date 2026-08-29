@@ -10,6 +10,7 @@ from experiment.workflow import (
     TaskStatus,
     legacy_task_run,
 )
+from experiment.workflow_planner import WorkflowPlanner
 
 
 def _legacy_result(status: str = "success") -> dict:
@@ -89,3 +90,66 @@ def test_sequential_executor_skips_task_with_failed_dependency():
     assert workflow.status == "failed"
     assert workflow.tasks[0].status is TaskStatus.FAILED
     assert workflow.tasks[1].status is TaskStatus.SKIPPED
+
+
+def test_planner_orders_dependencies_before_dependents():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(
+            TaskDefinition(task_id="evaluate", name="Avaliar", depends_on=("train",)),
+            TaskDefinition(task_id="prepare", name="Preparar"),
+            TaskDefinition(task_id="train", name="Treinar", depends_on=("prepare",)),
+        ),
+    )
+
+    plan = WorkflowPlanner().plan(definition)
+
+    assert [task.task_id for task in plan] == ["prepare", "train", "evaluate"]
+
+
+def test_planner_preserves_declaration_order_for_independent_tasks():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(
+            TaskDefinition(task_id="second", name="Segunda"),
+            TaskDefinition(task_id="first", name="Primeira"),
+        ),
+    )
+
+    plan = WorkflowPlanner().plan(definition)
+
+    assert [task.task_id for task in plan] == ["second", "first"]
+
+
+def test_planner_rejects_missing_dependency():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(TaskDefinition(task_id="train", name="Treinar", depends_on=("data",)),),
+    )
+
+    with pytest.raises(ValueError, match="tarefa inexistente: data"):
+        WorkflowPlanner().plan(definition)
+
+
+def test_planner_rejects_direct_cycle():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(TaskDefinition(task_id="train", name="Treinar", depends_on=("train",)),),
+    )
+
+    with pytest.raises(ValueError, match="ciclo.*train"):
+        WorkflowPlanner().plan(definition)
+
+
+def test_planner_rejects_indirect_cycle():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(
+            TaskDefinition(task_id="first", name="Primeira", depends_on=("third",)),
+            TaskDefinition(task_id="second", name="Segunda", depends_on=("first",)),
+            TaskDefinition(task_id="third", name="Terceira", depends_on=("second",)),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="first.*second.*third"):
+        WorkflowPlanner().plan(definition)

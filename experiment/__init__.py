@@ -34,3 +34,4 @@ from .workflow import (  # noqa: F401
     TaskRun,
     TaskStatus,
 )
+from .workflow_planner import WorkflowPlanner  # noqa: F401
