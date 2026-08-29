@@ -25,6 +25,7 @@ from .workflow import (
     TaskRun,
     TaskStatus,
 )
+from .workflow_planner import WorkflowPlanner
 
 TaskCallable = Callable[[], dict[str, Any] | None]
 
@@ -36,11 +37,12 @@ class SequentialWorkflowExecutor:
         self._task_functions = task_functions
 
     def execute(self, definition: ExperimentDefinition) -> ExperimentRun:
-        """Executa as tarefas em ordem de definição e retorna o agregado observado."""
+        """Executa as tarefas no plano topológico e retorna o agregado observado."""
         task_runs: list[TaskRun] = []
         statuses: dict[str, TaskStatus] = {}
+        task_plan = WorkflowPlanner().plan(definition)
 
-        for task in definition.tasks:
+        for task in task_plan:
             blocked = any(
                 statuses.get(dependency) is not TaskStatus.SUCCEEDED
                 for dependency in task.depends_on

@@ -92,6 +92,29 @@ def test_sequential_executor_skips_task_with_failed_dependency():
     assert workflow.tasks[1].status is TaskStatus.SKIPPED
 
 
+def test_sequential_executor_uses_topological_order():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(
+            TaskDefinition(task_id="evaluate", name="Avaliar", depends_on=("train",)),
+            TaskDefinition(task_id="prepare", name="Preparar"),
+            TaskDefinition(task_id="train", name="Treinar", depends_on=("prepare",)),
+        ),
+    )
+    execution_order: list[str] = []
+    executor = SequentialWorkflowExecutor(
+        {
+            task_id: lambda task_id=task_id: execution_order.append(task_id) or {}
+            for task_id in ("prepare", "train", "evaluate")
+        }
+    )
+
+    workflow = executor.execute(definition)
+
+    assert workflow.status == "success"
+    assert execution_order == ["prepare", "train", "evaluate"]
+
+
 def test_planner_orders_dependencies_before_dependents():
     definition = ExperimentDefinition(
         name="workflow",
