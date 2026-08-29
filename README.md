@@ -6,13 +6,14 @@
 ![codecarbon](https://img.shields.io/badge/codecarbon-%E2%89%A53.2.2-4CAF50?logo=leaflet&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-400%2B%20passing-brightgreen?logo=pytest&logoColor=white)
 
-# Introdução
+## Introdução
 
 O treinamento de modelos de Aprendizado de Máquina (ML) envolve a configuração de parâmetros, hiperparâmetros e do ambiente de execução, o que resulta em tempos de execução e consumo de energia distintos. Em ambientes de nuvem, os usuários precisam definir Acordos de Nível de Serviço (SLA), escolhendo recursos computacionais com base nas características do treinamento. Neste artigo, estendemos o conceito de Personalized Service Level Agreement (PSLA), propondo o PSLA4ML, que permite especificar requisitos e obter configurações de recursos, com custos e métricas associados ao workflow de treinamento do modelo. Os PSLA4ML são gerados por meio de consultas 𝑘-Skyband, considerando múltiplas métricas, como tempo, custo financeiro , etc. A abordagem foi avaliada por meio de workflows de treinamento de modelos da família BERT, o que indica sua viabilidade.
 
 ## :books: Publicação
 
-SANTOS, Gustavo; BEDO, Marcos; FROTA, Yuri; OLIVEIRA, Daniel. Definição de Acordos de Nível de Serviço Personalizados para Treinamento de Modelos via Consultas k-Skyband. In: SIMPÓSIO BRASILEIRO DE BANCO DE DADOS (SBBD), 41. , 2026, São Carlos/SP. Anais [...]. Porto Alegre: Sociedade Brasileira de Computação, 2026 . p. 43-56. ISSN 2763-8979. DOI: https://doi.org/10.5753/sbbd.2026.249138.
+SANTOS, Gustavo; BEDO, Marcos; FROTA, Yuri; OLIVEIRA, Daniel. Definição de Acordos de Nível de Serviço Personalizados para Treinamento de Modelos via Consultas k-Skyband. In: SIMPÓSIO BRASILEIRO DE BANCO DE DADOS (SBBD), 41. , 2026, São Carlos/SP. Anais [...]. Porto Alegre: Sociedade Brasileira de Computação, 2026 . p. 43-56. ISSN 2763-8979. DOI: <https://doi.org/10.5753/sbbd.2026.249138>.
+
 * Paper: [https://sol.sbc.org.br/index.php/sbbd/article/view/43959](https://sol.sbc.org.br/index.php/sbbd/article/view/43959)
 
 ## :speaker: Equipe [UFF eScience](https://uffescience.github.io/)
@@ -27,9 +28,9 @@ O projeto usa [`uv`](https://docs.astral.sh/uv/) como gerenciador de ambiente e 
 
 ### Pré-requisitos
 
-- Python ≥ 3.12, < 3.14
-- [`uv`](https://docs.astral.sh/uv/getting-started/installation/) instalado
-- (Opcional) NVIDIA GPU com CUDA 12.8 para aceleração
+* Python ≥ 3.12, < 3.14
+* [`uv`](https://docs.astral.sh/uv/getting-started/installation/) instalado
+* (Opcional) NVIDIA GPU com CUDA 12.8 para aceleração
 
 ### Passos
 
@@ -121,6 +122,7 @@ uv run python -m main --mode single --config config/experiments/BertPLI2.config
 uv run python -m main --mode single --gpu 0          # GPU 0
 uv run python -m main --mode single --gpu 0 1        # GPU 0+1
 ```
+
 ---
 
 Este repositório faz referência ao BERT-PLI, publicado no artigo da IJCAI-PRICAI 2020: *BERT-PLI: Modeling Paragraph-Level Interactions for Legal Case Retrieval*.
@@ -270,7 +272,6 @@ O JSON por experimento contém as seções:
 }
 ```
 
-
 ### Rastreamento de Emissões de CO₂
 
 O projeto integra o [`codecarbon`](https://mlco2.github.io/codecarbon/) para medir consumo
@@ -412,26 +413,26 @@ uso de RAM (MB) e F1-score de validação.
 
 > **Para fins acadêmicos:** Este repositório inclui dados sintéticos de casos jurídicos no diretório `data/`, simulando a estrutura do dataset COLIEE:
 >
-> - 34 pares de parágrafos para treino (exemplos positivos e negativos balanceados)
-> - 6 pares de parágrafos para validação
-> - 10 documentos com múltiplos parágrafos para teste
-> - Conteúdo jurídico realista cobrindo diversos temas (contratos, direito constitucional, processo civil, etc.)
+> * 34 pares de parágrafos para treino (exemplos positivos e negativos balanceados)
+> * 6 pares de parágrafos para validação
+> * 10 documentos com múltiplos parágrafos para teste
+> * Conteúdo jurídico realista cobrindo diversos temas (contratos, direito constitucional, processo civil, etc.)
 >
 > **Para pesquisa/produção:** acesse [COLIEE 2019](https://sites.ualberta.ca/~rabelo/COLIEE2019/) para solicitar o dataset original da competição.
 
-- [examples/task2/data_sample.json](examples/task2/data_sample.json): input para Estágio 2 (fine-tuning par de parágrafos)
+* [examples/task2/data_sample.json](examples/task2/data_sample.json): input para Estágio 2 (fine-tuning par de parágrafos)
 
 ```json
 { "guid": "queryID_paraID", "text_a": "<parágrafo decisão>", "text_b": "<parágrafo candidato>", "label": 0 }
 ```
 
-- [examples/task1/case_para_sample.json](examples/task1/case_para_sample.json): input para Estágio 3 (BertPoolOutMax)
+* [examples/task1/case_para_sample.json](examples/task1/case_para_sample.json): input para Estágio 3 (BertPoolOutMax)
 
 ```json
 { "guid": "queryID_docID", "q_paras": ["..."], "c_paras": ["..."], "label": 0 }
 ```
 
-- [examples/task1/embedding_sample.json](examples/task1/embedding_sample.json): input para Estágio 4 (AttenRNN)
+* [examples/task1/embedding_sample.json](examples/task1/embedding_sample.json): input para Estágio 4 (AttenRNN)
 
 ```json
 { "guid": "queryID_docID", "res": [[...], ...], "label": 0 }
@@ -439,8 +440,8 @@ uso de RAM (MB) e F1-score de validação.
 
 ### Dependências
 
-- Gerenciadas via `pyproject.toml` + `uv`. Consulte a seção [Instalação](#instalação) para instruções completas.
-- Para inspecionar as versões exatas resolvidas: `uv pip list`
+* Gerenciadas via `pyproject.toml` + `uv`. Consulte a seção [Instalação](#instalação) para instruções completas.
+* Para inspecionar as versões exatas resolvidas: `uv pip list`
 
 ## Reprodutibilidade
 
@@ -487,4 +488,4 @@ ensure_reproducibility(seed=42)
 * :necktie: [My LinkedIn Page](http://www.linkedin.com/in/gassantos)
 * :bookmark_tabs: [My Research Curriculum](http://lattes.cnpq.br/6269223842813109)
 * <div itemscope itemtype="https://schema.org/Person"><a itemprop="sameAs" content="https://orcid.org/0000-0002-3604-9194" href="https://orcid.org/0000-0002-3604-9194" target="orcid.widget" rel="noopener noreferrer" style="vertical-align:top;"><img src="https://orcid.org/sites/default/files/images/orcid_16x16.png" style="width:1em;margin-right:.5em;" alt="ORCID iD icon"> My Orcid</a></div>
-* :e-mail: gustavo.gassantos@gmail.com
+* :e-mail: <gustavo.gassantos@gmail.com>
