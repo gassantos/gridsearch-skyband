@@ -29,6 +29,7 @@ from .task_executor import SequentialWorkflowExecutor  # noqa: F401
 from .workflow import (  # noqa: F401
     ExperimentDefinition,
     ExperimentRun,
+    RetryPolicy,
     TaskDefinition,
     TaskExecutionAttempt,
     TaskRun,

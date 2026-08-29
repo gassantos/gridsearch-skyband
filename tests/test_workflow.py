@@ -5,6 +5,7 @@ import pytest
 from experiment.task_executor import SequentialWorkflowExecutor
 from experiment.workflow import (
     ExperimentDefinition,
+    RetryPolicy,
     TaskDefinition,
     TaskExecutionAttempt,
     TaskStatus,
@@ -113,6 +114,93 @@ def test_sequential_executor_uses_topological_order():
 
     assert workflow.status == "success"
     assert execution_order == ["prepare", "train", "evaluate"]
+
+
+def test_sequential_executor_retries_and_preserves_attempt_history():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(
+            TaskDefinition(
+                task_id="train",
+                name="Treinar",
+                retry_policy=RetryPolicy(max_attempts=2),
+            ),
+        ),
+    )
+    calls = 0
+
+    def train() -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("erro transitorio")
+        return {"artifacts": {"checkpoint": "model.pkl"}}
+
+    workflow = SequentialWorkflowExecutor({"train": train}).execute(definition)
+
+    attempts = workflow.tasks[0].attempts
+    assert workflow.status == "success"
+    assert [attempt.attempt_number for attempt in attempts] == [1, 2]
+    assert [attempt.status for attempt in attempts] == [TaskStatus.FAILED, TaskStatus.SUCCEEDED]
+    assert attempts[0].error == "erro transitorio"
+    assert attempts[1].artifacts == {"checkpoint": "model.pkl"}
+
+
+def test_sequential_executor_does_not_retry_non_eligible_error():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(
+            TaskDefinition(
+                task_id="train",
+                name="Treinar",
+                retry_policy=RetryPolicy(max_attempts=3, retryable_error_types=("TimeoutError",)),
+            ),
+        ),
+    )
+    calls = 0
+
+    def train() -> dict:
+        nonlocal calls
+        calls += 1
+        raise ValueError("configuracao invalida")
+
+    workflow = SequentialWorkflowExecutor({"train": train}).execute(definition)
+
+    assert workflow.status == "failed"
+    assert calls == 1
+    assert len(workflow.tasks[0].attempts) == 1
+
+
+def test_sequential_executor_retries_eligible_error_type():
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(
+            TaskDefinition(
+                task_id="train",
+                name="Treinar",
+                retry_policy=RetryPolicy(max_attempts=2, retryable_error_types=("TimeoutError",)),
+            ),
+        ),
+    )
+    calls = 0
+
+    def train() -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TimeoutError("tempo esgotado")
+        return {}
+
+    workflow = SequentialWorkflowExecutor({"train": train}).execute(definition)
+
+    assert workflow.status == "success"
+    assert calls == 2
+    assert workflow.tasks[0].attempts[0].error_type == "TimeoutError"
+
+
+def test_retry_policy_requires_positive_max_attempts():
+    with pytest.raises(ValueError, match="maior ou igual a 1"):
+        RetryPolicy(max_attempts=0)
 
 
 def test_planner_orders_dependencies_before_dependents():

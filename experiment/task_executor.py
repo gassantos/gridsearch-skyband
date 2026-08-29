@@ -58,7 +58,7 @@ class SequentialWorkflowExecutor:
             if task_fn is None:
                 raise ValueError(f"Nenhuma função registrada para a tarefa '{task.task_id}'.")
 
-            task_run = self._execute_task(task.task_id, task.name, task.task_type, task_fn)
+            task_run = self._execute_task(task, task_fn)
             task_runs.append(task_run)
             statuses[task.task_id] = task_run.status
 
@@ -75,14 +75,39 @@ class SequentialWorkflowExecutor:
 
     @staticmethod
     def _execute_task(
-        task_id: str,
-        task_name: str,
-        task_type: str,
+        task,
         task_fn: TaskCallable,
     ) -> TaskRun:
+        attempts: list[TaskExecutionAttempt] = []
+        for attempt_number in range(1, task.retry_policy.max_attempts + 1):
+            attempt = SequentialWorkflowExecutor._execute_attempt(
+                task.task_id,
+                attempt_number,
+                task_fn,
+            )
+            attempts.append(attempt)
+            if attempt.status is TaskStatus.SUCCEEDED:
+                break
+            if not task.retry_policy.allows_retry(attempt.error_type or ""):
+                break
+
+        return TaskRun(
+            task_id=task.task_id,
+            name=task.name,
+            task_type=task.task_type,
+            status=attempts[-1].status,
+            attempts=attempts,
+        )
+
+    @staticmethod
+    def _execute_attempt(
+        task_id: str,
+        attempt_number: int,
+        task_fn: TaskCallable,
+    ) -> TaskExecutionAttempt:
         attempt = TaskExecutionAttempt(
             attempt_id=str(uuid.uuid4()),
-            attempt_number=1,
+            attempt_number=attempt_number,
         )
         attempt.transition_to(TaskStatus.READY)
         attempt.transition_to(TaskStatus.RUNNING)
@@ -109,14 +134,9 @@ class SequentialWorkflowExecutor:
                 }
             }
             attempt.error = str(exc)
+            attempt.error_type = exc.__class__.__name__
             attempt.transition_to(TaskStatus.FAILED)
         finally:
             attempt.completed_at = now_iso()
 
-        return TaskRun(
-            task_id=task_id,
-            name=task_name,
-            task_type=task_type,
-            status=attempt.status,
-            attempts=[attempt],
-        )
+        return attempt

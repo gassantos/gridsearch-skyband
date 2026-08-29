@@ -47,6 +47,28 @@ def validate_task_transition(current: TaskStatus, target: TaskStatus) -> None:
 
 
 @dataclass(frozen=True)
+class RetryPolicy:
+    """Política declarativa para novas tentativas após uma falha."""
+
+    max_attempts: int = 1
+    retryable_error_types: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.max_attempts < 1:
+            raise ValueError("max_attempts deve ser maior ou igual a 1.")
+
+    def allows_retry(self, error_type: str) -> bool:
+        """Retorna se o tipo de erro está habilitado para nova tentativa.
+
+        Uma lista vazia aceita qualquer exceção; isso permite políticas simples
+        de tentativa limitada sem acoplar a definição a classes Python.
+        """
+        if not self.retryable_error_types:
+            return True
+        return error_type in self.retryable_error_types
+
+
+@dataclass(frozen=True)
 class TaskDefinition:
     """Definição declarativa de uma unidade funcional do workflow."""
 
@@ -55,6 +77,7 @@ class TaskDefinition:
     task_type: str = "train"
     depends_on: tuple[str, ...] = ()
     required: bool = True
+    retry_policy: RetryPolicy = field(default_factory=RetryPolicy)
     config: dict[str, Any] = field(default_factory=dict)
 
 
@@ -87,6 +110,7 @@ class TaskExecutionAttempt:
     metrics: dict[str, Any] = field(default_factory=dict)
     artifacts: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+    error_type: str | None = None
 
     def transition_to(self, target: TaskStatus) -> None:
         validate_task_transition(self.status, target)
