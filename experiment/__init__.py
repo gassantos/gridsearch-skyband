@@ -16,12 +16,20 @@ Submódulos:
 Autor: Gustavo Alexandre
 """
 
-from .runner import execute_experiment      # noqa: F401
-from .helpers import (                      # noqa: F401
+from .helpers import (  # noqa: F401
     ENERGY_COST_USD_PER_KWH,
     METRICS_DIR,
     TeeStream,
     estimate_bert_flops,
     load_config,
     now_iso,
+)
+from .runner import execute_experiment  # noqa: F401
+from .workflow import (  # noqa: F401
+    ExperimentDefinition,
+    ExperimentRun,
+    TaskDefinition,
+    TaskExecutionAttempt,
+    TaskRun,
+    TaskStatus,
 )

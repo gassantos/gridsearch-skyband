@@ -1,0 +1,147 @@
+"""Contratos de domínio para workflows monitorados por tarefa."""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+from enum import StrEnum
+from typing import Any
+
+WORKFLOW_SCHEMA_VERSION = "1.0"
+LEGACY_TASK_ID = "legacy-main-task"
+
+
+class TaskStatus(StrEnum):
+    """Estados possíveis de uma tarefa ou tentativa de tarefa."""
+
+    CREATED = "created"
+    READY = "ready"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    SKIPPED = "skipped"
+
+
+_VALID_TRANSITIONS = {
+    TaskStatus.CREATED: {TaskStatus.READY, TaskStatus.CANCELLED, TaskStatus.SKIPPED},
+    TaskStatus.READY: {TaskStatus.RUNNING, TaskStatus.CANCELLED, TaskStatus.SKIPPED},
+    TaskStatus.RUNNING: {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.CANCELLED},
+    TaskStatus.FAILED: {TaskStatus.READY},
+    TaskStatus.SUCCEEDED: set(),
+    TaskStatus.CANCELLED: set(),
+    TaskStatus.SKIPPED: set(),
+}
+
+
+def validate_task_transition(current: TaskStatus, target: TaskStatus) -> None:
+    """Valida uma transição de estado antes de ela ser persistida."""
+    if target not in _VALID_TRANSITIONS[current]:
+        raise ValueError(f"Transição inválida: {current.value} -> {target.value}")
+
+
+@dataclass(frozen=True)
+class TaskDefinition:
+    """Definição declarativa de uma unidade funcional do workflow."""
+
+    task_id: str
+    name: str
+    task_type: str = "train"
+    depends_on: tuple[str, ...] = ()
+    required: bool = True
+    config: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ExperimentDefinition:
+    """Definição versionada de um workflow de experimento."""
+
+    name: str
+    tasks: tuple[TaskDefinition, ...]
+    experiment_type: str = "custom"
+    schema_version: str = WORKFLOW_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if not self.tasks:
+            raise ValueError("Um experimento deve conter ao menos uma tarefa.")
+        task_ids = [task.task_id for task in self.tasks]
+        if len(task_ids) != len(set(task_ids)):
+            raise ValueError("Os identificadores de tarefa devem ser únicos.")
+
+
+@dataclass
+class TaskExecutionAttempt:
+    """Tentativa concreta e rastreável de execução de uma tarefa."""
+
+    attempt_id: str
+    attempt_number: int
+    status: TaskStatus = TaskStatus.CREATED
+    started_at: str | None = None
+    completed_at: str | None = None
+    metrics: dict[str, Any] = field(default_factory=dict)
+    artifacts: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+
+    def transition_to(self, target: TaskStatus) -> None:
+        validate_task_transition(self.status, target)
+        self.status = target
+
+
+@dataclass
+class TaskRun:
+    """Execução lógica de uma tarefa e seu histórico de tentativas."""
+
+    task_id: str
+    name: str
+    task_type: str
+    status: TaskStatus
+    attempts: list[TaskExecutionAttempt] = field(default_factory=list)
+
+
+@dataclass
+class ExperimentRun:
+    """Agregado de execução que preserva a visão global do experimento."""
+
+    experiment_run_id: str
+    definition_name: str
+    status: str
+    tasks: list[TaskRun]
+    schema_version: str = WORKFLOW_SCHEMA_VERSION
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def legacy_task_run(
+    result: dict[str, Any],
+    *,
+    task_id: str = LEGACY_TASK_ID,
+) -> ExperimentRun:
+    """Projeta o formato histórico como workflow de uma tarefa implícita."""
+    experiment = result["experiment"]
+    success = experiment["status"] == "success"
+    attempt = TaskExecutionAttempt(
+        attempt_id=experiment["id"],
+        attempt_number=1,
+        status=TaskStatus.SUCCEEDED if success else TaskStatus.FAILED,
+        started_at=experiment.get("timestamp_start"),
+        completed_at=experiment.get("timestamp_end"),
+        metrics={
+            "resources": result.get("resources", {}),
+            "evaluation": result.get("evaluation"),
+        },
+        artifacts={"result_config_name": experiment["config_name"]},
+        error=result.get("logs", {}).get("stderr_tail") or None,
+    )
+    task = TaskRun(
+        task_id=task_id,
+        name=task_id,
+        task_type="train",
+        status=attempt.status,
+        attempts=[attempt],
+    )
+    return ExperimentRun(
+        experiment_run_id=experiment["id"],
+        definition_name=experiment["config_name"],
+        status=experiment["status"],
+        tasks=[task],
+    )

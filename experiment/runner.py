@@ -52,6 +52,7 @@ from .helpers import (
 )
 from .persistence import append_csv_row, build_result_dict, write_json_result
 from .tpu_check import check_tpu_acceleration
+from .workflow import legacy_task_run
 
 try:
     from codecarbon import EmissionsTracker
@@ -80,7 +81,7 @@ def execute_experiment(
     compute_metrics_fn: ComputeMetricsFn | None = None,
     xla_rank: int | None = None,
     xla_world_size: int = 1,
-) -> None:
+) -> dict | None:
     """Executa um experimento completo de forma rastreável.
 
     Realiza treino in-process com captura de stdout, amostragem contínua
@@ -239,7 +240,7 @@ def execute_experiment(
             raise RuntimeError("Worker PJRT iniciado sem runtime torch_xla disponível.")
         xm.rendezvous("bl08_experiment_complete")
         if not is_primary_process:
-            return
+            return None
 
     # -------- STOP ENERGY TRACKER --------
     emissions_kg = None
@@ -345,6 +346,7 @@ def execute_experiment(
         stderr=stderr,
         tpu_check=tpu_check,
     )
+    result["workflow"] = legacy_task_run(result).to_dict()
 
     write_json_result(result, json_filename)
 
@@ -374,3 +376,4 @@ def execute_experiment(
     )
 
     print(f"[OK] Wrapper finalizou em {exec_time:.2f} segundos - {exp['name']} ({status})")
+    return result

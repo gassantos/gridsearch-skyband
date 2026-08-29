@@ -16,7 +16,7 @@ def _run_xla_worker(rank: int, world_size: int, experiment_kwargs: dict[str, Any
     )
 
 
-def launch_experiment(*, tpu_cores: int = 1, **experiment_kwargs: Any) -> None:
+def launch_experiment(*, tpu_cores: int = 1, **experiment_kwargs: Any) -> dict[str, Any] | None:
     """Executa diretamente ou cria um worker PJRT para cada core TPU."""
     if tpu_cores < 1:
         raise ValueError("tpu_cores deve ser maior ou igual a 1")
@@ -24,8 +24,7 @@ def launch_experiment(*, tpu_cores: int = 1, **experiment_kwargs: Any) -> None:
     if tpu_cores == 1:
         from .runner import execute_experiment
 
-        execute_experiment(**experiment_kwargs)
-        return
+        return execute_experiment(**experiment_kwargs)
 
     try:
         xmp = importlib.import_module("torch_xla.distributed.xla_multiprocessing")

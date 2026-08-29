@@ -123,7 +123,7 @@ def run_single_experiment(
 
     try:
         # Executa experimento nas GPUs designadas
-        launch_experiment(
+        result_data = launch_experiment(
             config_path=config_path,
             gpu_list=gpu_list,
             parallel_workers=parallel_workers,
@@ -133,16 +133,11 @@ def run_single_experiment(
             tpu_cores=tpu_cores,
         )
 
-        # Coleta resultados do arquivo JSON mais recente gerado
-        metrics_dir = PathManager.BASE_DIR / "output" / "experiments" / "metrics"
-        json_files = sorted(metrics_dir.glob("*.json"), key=os.path.getmtime)
-
-        if not json_files:
-            raise FileNotFoundError("Nenhum arquivo de resultados encontrado")
-
-        latest_result = json_files[-1]
-        with open(latest_result, 'r') as f:
-            result_data = json.load(f)
+        if result_data is None:
+            raise RuntimeError(
+                "A execução não retornou resultado. Grid search com TPU multicore "
+                "ainda não suporta a coleta determinística de resultados."
+            )
 
         # Adiciona parâmetros ao resultado
         result_data["grid_params"] = params
