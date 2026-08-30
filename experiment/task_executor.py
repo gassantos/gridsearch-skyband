@@ -66,7 +66,8 @@ class SequentialWorkflowExecutor:
             )
             if blocked:
                 task_runs.append(
-                    TaskRun(task.task_id, task.name, task.task_type, TaskStatus.SKIPPED)
+                    TaskRun(task.task_id, task.name, task.task_type, TaskStatus.SKIPPED,
+                            config=task.config, input_signatures=task.input_signatures)
                 )
                 statuses[task.task_id] = TaskStatus.SKIPPED
                 continue
@@ -131,7 +132,8 @@ class SequentialWorkflowExecutor:
             metrics={**cached.get("metrics", {}), "cache_hit": True},
             artifacts=cached.get("artifacts", {}),
         )
-        return TaskRun(task.task_id, task.name, task.task_type, TaskStatus.CACHED, [attempt])
+        return TaskRun(task.task_id, task.name, task.task_type, TaskStatus.CACHED, [attempt],
+                   task.config, task.input_signatures)
 
     @staticmethod
     def _execute_task(
@@ -171,6 +173,8 @@ class SequentialWorkflowExecutor:
             task_type=task.task_type,
             status=attempts[-1].status,
             attempts=attempts,
+            config=task.config,
+            input_signatures=task.input_signatures,
         )
 
     @staticmethod
@@ -304,7 +308,8 @@ class ParallelWorkflowExecutor(SequentialWorkflowExecutor):
                 for dependency in task.depends_on
             ):
                 task_runs[task.task_id] = TaskRun(
-                    task.task_id, task.name, task.task_type, TaskStatus.SKIPPED
+                    task.task_id, task.name, task.task_type, TaskStatus.SKIPPED,
+                    config=task.config, input_signatures=task.input_signatures,
                 )
             else:
                 previous = previous_tasks.get(task.task_id)

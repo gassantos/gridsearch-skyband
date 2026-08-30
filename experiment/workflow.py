@@ -129,6 +129,8 @@ class TaskRun:
     task_type: str
     status: TaskStatus
     attempts: list[TaskExecutionAttempt] = field(default_factory=list)
+    config: dict[str, Any] = field(default_factory=dict)
+    input_signatures: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

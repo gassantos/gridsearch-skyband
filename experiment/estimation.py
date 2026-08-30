@@ -18,8 +18,9 @@ def estimate_workflow_resources(
 ) -> dict[str, Any]:
     """Estima recursos de cada tarefa pela mediana de tentativas concluidas.
 
-    A busca prioriza o ``task_id``. Na ausencia de historico da tarefa, usa
-    tentativas do mesmo ``task_type`` e registra explicitamente esse fallback.
+    Tarefas com perfil declardo usam apenas historico com a mesma configuracao
+    e assinaturas de entrada. Sem perfil, a busca prioriza o ``task_id`` e
+    usa o ``task_type`` como fallback explicito.
     Tentativas falhas nao entram na baseline de uma execucao bem-sucedida.
     """
     task_estimates = [
@@ -37,9 +38,7 @@ def _estimate_task_resources(
     task: TaskDefinition,
     history: list[ExperimentRun],
 ) -> dict[str, Any]:
-    exact = _matching_attempts(history, task_id=task.task_id)
-    same_type = _matching_attempts(history, task_type=task.task_type)
-    attempts, match_level = (exact, "task_id") if exact else (same_type, "task_type")
+    attempts, match_level = _select_matching_attempts(task, history)
     resources = [
         attempt.metrics.get("resources", {})
         for attempt in attempts
@@ -57,16 +56,38 @@ def _estimate_task_resources(
     }
 
 
+def _select_matching_attempts(
+    definition: TaskDefinition,
+    history: list[ExperimentRun],
+) -> tuple[list[Any], str]:
+    if definition.config or definition.input_signatures:
+        exact = _matching_attempts(
+            history, task_id=definition.task_id, task_type=definition.task_type, definition=definition
+        )
+        same_profile = _matching_attempts(history, task_type=definition.task_type, definition=definition)
+        return (exact, "task_id_and_profile") if exact else (same_profile, "task_profile")
+
+    exact = _matching_attempts(history, task_id=definition.task_id)
+    same_type = _matching_attempts(history, task_type=definition.task_type)
+    return (exact, "task_id") if exact else (same_type, "task_type")
+
+
 def _matching_attempts(
     history: list[ExperimentRun],
     *,
     task_id: str | None = None,
     task_type: str | None = None,
+    definition: TaskDefinition | None = None,
 ) -> list[Any]:
     attempts = []
     for workflow in history:
         for task in workflow.tasks:
             matches = task.task_id == task_id if task_id is not None else task.task_type == task_type
+            matches = matches and (task_type is None or task.task_type == task_type)
+            matches = matches and (
+                definition is None
+                or (task.config == definition.config and task.input_signatures == definition.input_signatures)
+            )
             if matches:
                 attempts.extend(attempt for attempt in task.attempts if attempt.status in _USABLE_STATUSES)
     return attempts

@@ -160,6 +160,8 @@ def load_workflow_run(run_dir: Path) -> ExperimentRun:
                 )
                 for attempt in task.get("attempts", [])
             ],
+            config=task.get("config", {}),
+            input_signatures=task.get("input_signatures", {}),
         )
         for task in manifest["tasks"]
     ]
