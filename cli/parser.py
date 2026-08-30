@@ -123,6 +123,19 @@ Configurações padrão:
     )
 
     parser.add_argument(
+        "--workflow",
+        choices=["bertpli"],
+        default=None,
+        help="Executa um workflow declarativo em vez dos modos single/grid.",
+    )
+
+    parser.add_argument(
+        "--workflow-dry-run",
+        action="store_true",
+        help="Valida o encadeamento do workflow sem executar os treinamentos.",
+    )
+
+    parser.add_argument(
         "--config",
         type=str,
         default=DEFAULT_CONFIG,

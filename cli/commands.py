@@ -10,6 +10,14 @@ Autor: Gustavo Alexandre
 import argparse
 from abc import ABC, abstractmethod
 
+from experiment.bertpli_workflow import (
+    BertPliWorkflowConfig,
+    build_bertpli_task_functions,
+    build_bertpli_workflow,
+)
+from experiment.persistence import write_workflow_run
+from experiment.task_executor import SequentialWorkflowExecutor
+
 from .runners import (
     _build_dataset_overrides,
     run_grid_search_experiments,
@@ -94,8 +102,41 @@ class GridCommand(Command):
             )
 
 
+class BertPliWorkflowCommand(Command):
+    """Executa o pipeline BERT-PLI composto por tarefas rastreáveis."""
+
+    def execute(self, args: argparse.Namespace, sla_dict: dict) -> None:
+        del sla_dict
+        gpu = ",".join(map(str, args.gpu)) if args.gpu else None
+        config = BertPliWorkflowConfig(gpu=gpu)
+        definition = build_bertpli_workflow(config)
+        commands: list[list[str]] = []
+        task_functions = build_bertpli_task_functions(
+            config,
+            command_runner=commands.append if args.workflow_dry_run else None,
+        )
+        if args.workflow_dry_run:
+            task_functions = {
+                **task_functions,
+                "evaluate_retrieval": lambda: {
+                    "metrics": {"dry_run": True},
+                    "artifacts": {"metrics": config.metrics_result},
+                },
+            }
+        workflow = SequentialWorkflowExecutor(task_functions).execute(definition)
+        run_dir = write_workflow_run(workflow)
+        if args.workflow_dry_run:
+            print(f"Workflow BERT-PLI validado sem treinamento: {run_dir}")
+            for command in commands:
+                print(" ".join(command))
+        elif workflow.status != "success":
+            raise RuntimeError(f"Workflow BERT-PLI falhou. Manifesto: {run_dir}")
+
+
 def _resolve_command(args: argparse.Namespace) -> Command:
     """Mapeia os argumentos do CLI para o Command concreto adequado."""
+    if args.workflow == "bertpli":
+        return BertPliWorkflowCommand()
     if args.skyband_only:
         return SkybandOnlyCommand()
     if args.mode == "single":
