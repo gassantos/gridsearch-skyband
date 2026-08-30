@@ -33,6 +33,12 @@ from .dominance import (                                     # noqa: F401
 
 # --- comparison ---
 from .comparison import compare_skyband_vs_ranking           # noqa: F401
+from .workflow_skyband import (                              # noqa: F401
+    task_skyband_query,
+    task_to_skyband_point,
+    workflow_skyband_query,
+    workflow_to_skyband_point,
+)
 
 # --- visualization ---
 from .visualization import (                                 # noqa: F401
