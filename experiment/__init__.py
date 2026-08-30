@@ -12,10 +12,20 @@ Submódulos:
     - ``helpers``     — Utilitários (TeeStream, load_config, etc.)
     - ``evaluation``  — Extração de métricas de avaliação
     - ``persistence`` — Persistência JSON e CSV
+    - ``task_cache``   — Cache de tarefas para evitar recomputação desnecessária
+    - ``task_executor`` — Execução de tarefas dentro de workflows experimentais
+    - ``workflow_planner`` — Planejador de execução de workflows experimentais
+    - ``workflow``      — Definições e execução de workflows experimentais
+    - ``bertpli_workflow`` — Workflow de referência BERT-PLI
 
 Autor: Gustavo Alexandre
 """
 
+from .bertpli_workflow import (  # noqa: F401
+    BertPliWorkflowConfig,
+    build_bertpli_task_functions,
+    build_bertpli_workflow,
+)
 from .helpers import (  # noqa: F401
     ENERGY_COST_USD_PER_KWH,
     METRICS_DIR,
