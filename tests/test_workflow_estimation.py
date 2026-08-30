@@ -11,7 +11,7 @@ from experiment.workflow import (
 )
 
 
-def _workflow(run_id, train_time, train_status=TaskStatus.SUCCEEDED):
+def _workflow(run_id, train_time, train_status=TaskStatus.SUCCEEDED, train_config=None):
     return ExperimentRun(
         run_id, "historico", "success",
         [
@@ -22,7 +22,7 @@ def _workflow(run_id, train_time, train_status=TaskStatus.SUCCEEDED):
                     "cost_usd": train_time / 10,
                     "rss_mb": 100 + train_time,
                 }}),
-            ]),
+            ], config=train_config or {}),
             TaskRun("validate", "Validar", "evaluate", TaskStatus.SUCCEEDED, [
                 TaskExecutionAttempt("validate-1", 1, TaskStatus.SUCCEEDED, metrics={"resources": {
                     "task_time_sec": 4, "peak_vram_mb": 300,
@@ -68,3 +68,22 @@ def test_estimate_falls_back_to_task_type_and_ignores_failed_attempts():
     assert task["match_level"] == "task_type"
     assert task["sample_count"] == 1
     assert task["resources"]["task_time_sec"] == 10.0
+
+
+def test_estimate_uses_only_history_with_matching_task_profile():
+    definition = ExperimentDefinition(
+        "target", (TaskDefinition("train", "Treinar", "train", config={"batch_size": 32}),)
+    )
+
+    estimate = estimate_workflow_resources(
+        definition,
+        [
+            _workflow("different-profile", 10, train_config={"batch_size": 16}),
+            _workflow("matching-profile", 30, train_config={"batch_size": 32}),
+        ],
+    )
+
+    task = estimate["tasks"][0]
+    assert task["match_level"] == "task_id_and_profile"
+    assert task["sample_count"] == 1
+    assert task["resources"]["task_time_sec"] == 30.0

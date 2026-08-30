@@ -12,7 +12,10 @@ def test_write_workflow_run_writes_manifest_and_task(monkeypatch, tmp_path):
         experiment_run_id="run-1",
         definition_name="workflow",
         status="success",
-        tasks=[TaskRun("train", "Treino", "train", TaskStatus.SUCCEEDED)],
+        tasks=[TaskRun(
+            "train", "Treino", "train", TaskStatus.SUCCEEDED,
+            config={"batch_size": 32}, input_signatures={"dataset": "abc123"},
+        )],
     )
 
     run_dir = persistence.write_workflow_run(workflow)
@@ -20,7 +23,10 @@ def test_write_workflow_run_writes_manifest_and_task(monkeypatch, tmp_path):
     with open(run_dir / "manifest.json", encoding="utf-8") as f:
         assert json.load(f)["experiment_run_id"] == "run-1"
     with open(run_dir / "tasks" / "train.json", encoding="utf-8") as f:
-        assert json.load(f)["status"] == "succeeded"
+        task = json.load(f)
+    assert task["status"] == "succeeded"
+    assert task["config"] == {"batch_size": 32}
+    assert task["input_signatures"] == {"dataset": "abc123"}
 
 
 def test_load_workflow_run_restores_attempt_history(monkeypatch, tmp_path):
@@ -40,6 +46,8 @@ def test_load_workflow_run_restores_attempt_history(monkeypatch, tmp_path):
                         "attempt-1", 1, TaskStatus.FAILED, error="timeout", error_type="TimeoutError"
                     )
                 ],
+                config={"epochs": 3},
+                input_signatures={"dataset": "abc123"},
             )
         ],
     )
@@ -48,3 +56,5 @@ def test_load_workflow_run_restores_attempt_history(monkeypatch, tmp_path):
 
     assert restored.experiment_run_id == "run-1"
     assert restored.tasks[0].attempts[0].error_type == "TimeoutError"
+    assert restored.tasks[0].config == {"epochs": 3}
+    assert restored.tasks[0].input_signatures == {"dataset": "abc123"}
