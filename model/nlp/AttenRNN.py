@@ -78,7 +78,7 @@ class AttentionRNN(nn.Module):
             config:   ConfigParser com parâmetros do modelo e treino.
             gpu_list: Lista de IDs de GPU disponíveis (usada em ``init_weight``).
         """
-        super(AttentionRNN, self).__init__()
+        super().__init__()
 
         # Dimensão de entrada = hidden_size do backbone BERT que gerou os embeddings.
         # Lida do config para desacoplar AttenRNN do backbone concreto.
@@ -124,7 +124,7 @@ class AttentionRNN(nn.Module):
         """
         try:
             label_weight = config.getfloat('model', 'label_weight')
-        except Exception:
+        except Exception:  # noqa: BLE001
             return None
         weight_lst = torch.ones(self.output_dim)
         weight_lst[-1] = label_weight
@@ -132,7 +132,7 @@ class AttentionRNN(nn.Module):
             weight_lst = weight_lst.cuda()
         return weight_lst
 
-    def init_hidden(self, config, batch_size: int, gpu_list) -> None:
+    def init_hidden(self, config, batch_size: int, gpu_list, device: torch.device | None = None) -> None:
         """Inicializa o estado oculto da RNN com zeros no device correto.
 
         Para LSTM, cria uma tupla ``(h_0, c_0)``; para GRU, cria apenas ``h_0``.
@@ -140,9 +140,11 @@ class AttentionRNN(nn.Module):
         Args:
             config:     ConfigParser para determinar o tipo de RNN (``model.rnn``).
             batch_size: Tamanho do batch atual.
-            gpu_list:   Lista de IDs de GPU (define CPU vs CUDA).
+            gpu_list:   Lista de IDs de GPU, mantida por compatibilidade.
+            device:     Dispositivo da entrada do batch, quando disponível.
         """
-        device = torch.device("cuda" if torch.cuda.is_available() and len(gpu_list) > 0 else "cpu")
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() and len(gpu_list) > 0 else "cpu")
         shape = (self.direction * self.num_layers, batch_size, self.hidden_dim)
         if config.get('model', 'rnn') == 'lstm':
             self.hidden = (
@@ -185,7 +187,7 @@ class AttentionRNN(nn.Module):
         """
         x = data['input'] # B * M * I
         batch_size = x.size()[0]
-        self.init_hidden(config, batch_size, gpu_list) # 2 * B * H
+        self.init_hidden(config, batch_size, gpu_list, device=x.device) # 2 * B * H
 
         rnn_out, self.hidden = self.rnn(x, self.hidden) # rnn_out: B * M * 2H, hidden: 2 * B * H
         tmp_rnn = rnn_out.permute(0, 2, 1) # B * 2H * M

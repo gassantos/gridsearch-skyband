@@ -13,6 +13,8 @@ import configparser
 import functools
 import os
 
+_MISSING = object()
+
 
 class ConfigParser:
     """
@@ -58,13 +60,16 @@ def _build_func(func_name: str):
     """
     @functools.wraps(getattr(configparser.RawConfigParser, func_name))
     def func(self, *args, **kwargs):
-        try:
-            return getattr(self.config, func_name)(*args, **kwargs)
-        except (configparser.NoSectionError, configparser.NoOptionError):
+        fallback = kwargs.pop("fallback", _MISSING)
+        last_error = None
+        for parser in (self.config, self.local_config, self.default_config):
             try:
-                return getattr(self.local_config, func_name)(*args, **kwargs)
-            except (configparser.NoSectionError, configparser.NoOptionError):
-                return getattr(self.default_config, func_name)(*args, **kwargs)
+                return getattr(parser, func_name)(*args, **kwargs)
+            except (configparser.NoSectionError, configparser.NoOptionError) as exc:
+                last_error = exc
+        if fallback is not _MISSING:
+            return fallback
+        raise last_error
 
     return func
 
