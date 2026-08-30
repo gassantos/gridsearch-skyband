@@ -17,20 +17,21 @@ Submódulos:
     - ``workflow_planner`` — Planejador de execução de workflows experimentais
     - ``workflow``      — Definições e execução de workflows experimentais
     - ``bertpli_workflow`` — Workflow de referência BERT-PLI
+    - ``workflow_reporting`` — Relatorios textuais e timeline estruturada de workflows
 
 Autor: Gustavo Alexandre
 """
 
-from .bertpli_workflow import (  # noqa: F401
-    BertPliWorkflowConfig,
-    build_bertpli_task_functions,
-    build_bertpli_workflow,
-)
 from .aggregation import (  # noqa: F401
     MetricAggregation,
     MetricAggregationPolicy,
     aggregate_evaluation_metrics,
     aggregate_workflow_run,
+)
+from .bertpli_workflow import (  # noqa: F401
+    BertPliWorkflowConfig,
+    build_bertpli_task_functions,
+    build_bertpli_workflow,
 )
 from .helpers import (  # noqa: F401
     ENERGY_COST_USD_PER_KWH,
@@ -57,3 +58,4 @@ from .workflow import (  # noqa: F401
     TaskStatus,
 )
 from .workflow_planner import WorkflowPlanner  # noqa: F401
+from .workflow_reporting import workflow_report, workflow_timeline  # noqa: F401
