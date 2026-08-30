@@ -3,7 +3,10 @@
 import pytest
 
 from experiment.task_cache import TaskCache
-from experiment.task_executor import SequentialWorkflowExecutor
+from experiment.task_executor import (
+    ParallelWorkflowExecutor,
+    SequentialWorkflowExecutor,
+)
 from experiment.workflow import (
     ExperimentDefinition,
     ExperimentRun,
@@ -86,7 +89,7 @@ def test_sequential_executor_skips_task_with_failed_dependency():
         ),
     )
     executor = SequentialWorkflowExecutor(
-        {"first": lambda: (_ for _ in ()).throw(RuntimeError("falhou")), "next": lambda: {}}
+        {"first": lambda: (_ for _ in ()).throw(RuntimeError("falhou")), "next": dict}
     )
 
     workflow = executor.execute(definition)
@@ -361,6 +364,93 @@ def test_task_cache_invalidates_when_input_or_code_version_changes(tmp_path):
     assert input_run.tasks[0].status is TaskStatus.SUCCEEDED
     assert code_run.tasks[0].status is TaskStatus.SUCCEEDED
     assert calls == 3
+
+
+def test_parallel_executor_runs_independent_tasks_concurrently():
+    definition = ExperimentDefinition(
+        "workflow",
+        (
+            TaskDefinition("first", "Primeira"),
+            TaskDefinition("second", "Segunda"),
+            TaskDefinition("final", "Final", depends_on=("first", "second")),
+        ),
+    )
+    started: list[str] = []
+    from threading import Barrier, Thread
+
+    barrier = Barrier(3)
+
+    def independent(task_id: str) -> dict:
+        started.append(task_id)
+        barrier.wait(timeout=1)
+        return {}
+
+    executor = ParallelWorkflowExecutor(
+        {
+            "first": lambda: independent("first"),
+            "second": lambda: independent("second"),
+            "final": lambda: {"artifacts": {"done": True}},
+        },
+        max_workers=2,
+    )
+
+    run_thread = Thread(target=lambda: executor.execute(definition))
+    run_thread.start()
+    barrier.wait(timeout=1)
+    run_thread.join(timeout=2)
+
+    assert sorted(started) == ["first", "second"]
+
+
+def test_parallel_executor_respects_dependencies_and_worker_limit():
+    definition = ExperimentDefinition(
+        "workflow",
+        (
+            TaskDefinition("prepare", "Preparar"),
+            TaskDefinition("train", "Treinar", depends_on=("prepare",)),
+        ),
+    )
+    calls: list[str] = []
+    executor = ParallelWorkflowExecutor(
+        {
+            "prepare": lambda: calls.append("prepare") or {},
+            "train": lambda: calls.append("train") or {},
+        },
+        max_workers=1,
+    )
+
+    workflow = executor.execute(definition)
+
+    assert workflow.status == "success"
+    assert calls == ["prepare", "train"]
+
+
+def test_parallel_executor_skips_dependents_of_failed_task():
+    definition = ExperimentDefinition(
+        "workflow",
+        (
+            TaskDefinition("prepare", "Preparar"),
+            TaskDefinition("train", "Treinar", depends_on=("prepare",)),
+        ),
+    )
+    executor = ParallelWorkflowExecutor(
+        {
+            "prepare": lambda: (_ for _ in ()).throw(RuntimeError("falhou")),
+            "train": lambda: pytest.fail("não deve executar"),
+        },
+        max_workers=2,
+    )
+
+    workflow = executor.execute(definition)
+
+    assert workflow.status == "failed"
+    assert workflow.tasks[0].status is TaskStatus.FAILED
+    assert workflow.tasks[1].status is TaskStatus.SKIPPED
+
+
+def test_parallel_executor_requires_positive_worker_limit():
+    with pytest.raises(ValueError, match="maior ou igual a 1"):
+        ParallelWorkflowExecutor({}, max_workers=0)
 
 
 def test_planner_orders_dependencies_before_dependents():

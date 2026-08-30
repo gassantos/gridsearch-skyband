@@ -13,6 +13,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Callable, Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 import psutil
@@ -213,3 +214,137 @@ class SequentialWorkflowExecutor:
             attempt.completed_at = now_iso()
 
         return attempt
+
+
+class ParallelWorkflowExecutor(SequentialWorkflowExecutor):
+    """Executa em paralelo tarefas independentes de um workflow em DAG."""
+
+    def __init__(
+        self,
+        task_functions: Mapping[str, TaskCallable],
+        *,
+        max_workers: int,
+        cache: TaskCache | None = None,
+        code_version: str | None = None,
+    ) -> None:
+        if max_workers < 1:
+            raise ValueError("max_workers deve ser maior ou igual a 1.")
+        super().__init__(task_functions, cache=cache, code_version=code_version)
+        self._max_workers = max_workers
+
+    def execute(
+        self,
+        definition: ExperimentDefinition,
+        resume_from: ExperimentRun | None = None,
+    ) -> ExperimentRun:
+        """Agenda tarefas prontas até o limite de workers e espera cada onda terminar."""
+        task_plan = WorkflowPlanner().plan(definition)
+        task_by_id = {task.task_id: task for task in task_plan}
+        previous_tasks = {
+            task.task_id: task for task in resume_from.tasks
+        } if resume_from else {}
+        statuses: dict[str, TaskStatus] = {}
+        task_runs: dict[str, TaskRun] = {}
+        pending = {task.task_id for task in task_plan}
+
+        with ThreadPoolExecutor(max_workers=self._max_workers) as pool:
+            while pending:
+                progressed = self._reuse_or_skip_tasks(
+                    pending, task_plan, previous_tasks, statuses, task_runs
+                )
+                ready = [
+                    task_by_id[task_id]
+                    for task_id in pending
+                    if all(
+                        statuses.get(dependency) in {TaskStatus.SUCCEEDED, TaskStatus.CACHED}
+                        for dependency in task_by_id[task_id].depends_on
+                    )
+                ]
+                if not ready:
+                    if not progressed:
+                        raise RuntimeError("Não foi possível agendar tarefas pendentes do workflow.")
+                    continue
+
+                futures: dict[Future[TaskRun], str] = {
+                    pool.submit(self._execute_ready_task, task, previous_tasks.get(task.task_id)): task.task_id
+                    for task in ready[:self._max_workers]
+                }
+                for future, task_id in futures.items():
+                    task_run = future.result()
+                    task_runs[task_id] = task_run
+                    statuses[task_id] = task_run.status
+                    pending.remove(task_id)
+
+        required_failed = any(
+            task.required and statuses[task.task_id] not in {TaskStatus.SUCCEEDED, TaskStatus.CACHED}
+            for task in definition.tasks
+        )
+        return ExperimentRun(
+            experiment_run_id=resume_from.experiment_run_id if resume_from else str(uuid.uuid4()),
+            definition_name=definition.name,
+            status="failed" if required_failed else "success",
+            tasks=[task_runs[task.task_id] for task in task_plan],
+        )
+
+    def _reuse_or_skip_tasks(
+        self,
+        pending: set[str],
+        task_plan: tuple,
+        previous_tasks: dict[str, TaskRun],
+        statuses: dict[str, TaskStatus],
+        task_runs: dict[str, TaskRun],
+    ) -> bool:
+        progressed = False
+        for task in task_plan:
+            if task.task_id not in pending:
+                continue
+            if any(
+                dependency in statuses
+                and statuses[dependency] not in {TaskStatus.SUCCEEDED, TaskStatus.CACHED}
+                for dependency in task.depends_on
+            ):
+                task_runs[task.task_id] = TaskRun(
+                    task.task_id, task.name, task.task_type, TaskStatus.SKIPPED
+                )
+            else:
+                previous = previous_tasks.get(task.task_id)
+                if (
+                    previous and previous.status in {TaskStatus.SUCCEEDED, TaskStatus.CACHED}
+                    or previous and previous.status is TaskStatus.FAILED and not self._can_resume(task, previous)
+                ):
+                    task_runs[task.task_id] = previous
+                else:
+                    continue
+            statuses[task.task_id] = task_runs[task.task_id].status
+            pending.remove(task.task_id)
+            progressed = True
+        return progressed
+
+    @staticmethod
+    def _can_resume(task, previous: TaskRun) -> bool:
+        last_attempt = previous.attempts[-1] if previous.attempts else None
+        return bool(
+            last_attempt
+            and len(previous.attempts) < task.retry_policy.max_attempts
+            and task.retry_policy.allows_retry(last_attempt.error_type or "")
+        )
+
+    def _execute_ready_task(self, task, previous: TaskRun | None) -> TaskRun:
+        cache = self._cache
+        signature = (
+            cache.signature(task, self._code_version)
+            if cache and self._code_version
+            else None
+        )
+        cached = cache.get(signature) if cache and signature else None
+        if cached:
+            return self._cached_task_run(task, cached)
+
+        task_fn = self._task_functions.get(task.task_id)
+        if task_fn is None:
+            raise ValueError(f"Nenhuma função registrada para a tarefa '{task.task_id}'.")
+        task_run = self._execute_task(task, task_fn, previous)
+        if task_run.status is TaskStatus.SUCCEEDED and cache and signature:
+            attempt = task_run.attempts[-1]
+            cache.put(signature, metrics=attempt.metrics, artifacts=attempt.artifacts)
+        return task_run
