@@ -33,6 +33,7 @@ from .bertpli_workflow import (  # noqa: F401
     build_bertpli_task_functions,
     build_bertpli_workflow,
 )
+from .estimation import estimate_workflow_resources  # noqa: F401
 from .helpers import (  # noqa: F401
     ENERGY_COST_USD_PER_KWH,
     METRICS_DIR,
