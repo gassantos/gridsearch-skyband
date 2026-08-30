@@ -10,16 +10,14 @@ Executor sequencial de tarefas de um workflow.
 
 from __future__ import annotations
 
-import time
 import uuid
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
-import psutil
-
 from .helpers import now_iso
 from .task_cache import TaskCache
+from .task_telemetry import TaskTelemetryCollector
 from .workflow import (
     ExperimentDefinition,
     ExperimentRun,
@@ -41,10 +39,12 @@ class SequentialWorkflowExecutor:
         *,
         cache: TaskCache | None = None,
         code_version: str | None = None,
+        telemetry: TaskTelemetryCollector | None = None,
     ) -> None:
         self._task_functions = task_functions
         self._cache = cache
         self._code_version = code_version
+        self._telemetry = telemetry or TaskTelemetryCollector()
 
     def execute(
         self,
@@ -135,8 +135,8 @@ class SequentialWorkflowExecutor:
         return TaskRun(task.task_id, task.name, task.task_type, TaskStatus.CACHED, [attempt],
                    task.config, task.input_signatures)
 
-    @staticmethod
     def _execute_task(
+        self,
         task,
         task_fn: TaskCallable,
         previous: TaskRun | None = None,
@@ -156,7 +156,7 @@ class SequentialWorkflowExecutor:
             max_attempt_number = max(max_attempt_number, len(attempts) + 1)
 
         for attempt_number in range(len(attempts) + 1, max_attempt_number + 1):
-            attempt = SequentialWorkflowExecutor._execute_attempt(
+            attempt = self._execute_attempt(
                 task.task_id,
                 attempt_number,
                 task_fn,
@@ -177,8 +177,8 @@ class SequentialWorkflowExecutor:
             input_signatures=task.input_signatures,
         )
 
-    @staticmethod
     def _execute_attempt(
+        self,
         task_id: str,
         attempt_number: int,
         task_fn: TaskCallable,
@@ -190,27 +190,20 @@ class SequentialWorkflowExecutor:
         attempt.transition_to(TaskStatus.READY)
         attempt.transition_to(TaskStatus.RUNNING)
         attempt.started_at = now_iso()
-        process = psutil.Process()
-        start = time.perf_counter()
-
         try:
-            output = task_fn() or {}
+            output, telemetry_metrics, task_error = self._telemetry.measure(task_fn)
+            task_resources = output.get("metrics", {}).get("resources", {})
             attempt.metrics = {
-                "resources": {
-                    "task_time_sec": time.perf_counter() - start,
-                    "rss_mb": process.memory_info().rss / (1024 ** 2),
-                },
                 **output.get("metrics", {}),
+                "resources": {**task_resources, **telemetry_metrics},
             }
             attempt.artifacts = output.get("artifacts", {})
+            if task_error is not None:
+                raise task_error
             attempt.transition_to(TaskStatus.SUCCEEDED)
         except Exception as exc:  # noqa: BLE001
-            attempt.metrics = {
-                "resources": {
-                    "task_time_sec": time.perf_counter() - start,
-                    "rss_mb": process.memory_info().rss / (1024 ** 2),
-                }
-            }
+            if not attempt.metrics:
+                attempt.metrics = {"resources": {}}
             attempt.error = str(exc)
             attempt.error_type = exc.__class__.__name__
             attempt.transition_to(TaskStatus.FAILED)
@@ -230,10 +223,11 @@ class ParallelWorkflowExecutor(SequentialWorkflowExecutor):
         max_workers: int,
         cache: TaskCache | None = None,
         code_version: str | None = None,
+        telemetry: TaskTelemetryCollector | None = None,
     ) -> None:
         if max_workers < 1:
             raise ValueError("max_workers deve ser maior ou igual a 1.")
-        super().__init__(task_functions, cache=cache, code_version=code_version)
+        super().__init__(task_functions, cache=cache, code_version=code_version, telemetry=telemetry)
         self._max_workers = max_workers
 
     def execute(

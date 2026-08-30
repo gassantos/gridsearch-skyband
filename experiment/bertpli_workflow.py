@@ -12,6 +12,7 @@ from typing import Any
 
 from tools.eval_tool import compute_metrics, parse_gru_results
 
+from .helpers import load_config
 from .workflow import ExperimentDefinition, TaskDefinition
 
 CommandRunner = Callable[[list[str]], None]
@@ -91,7 +92,8 @@ def build_bertpli_task_functions(
 
     def fine_tune() -> dict[str, Any]:
         run([*_python_module("scripts.train"), "--config", config.bert_config, *gpu_args])
-        return {"artifacts": {"bert_checkpoint": config.bert_checkpoint}}
+        return {"metrics": {"resources": _profiling_metrics(config.bert_config)},
+            "artifacts": {"bert_checkpoint": config.bert_checkpoint}}
 
     def poolout() -> dict[str, Any]:
         run([
@@ -111,7 +113,8 @@ def build_bertpli_task_functions(
 
     def train_rnn() -> dict[str, Any]:
         run([*_python_module("scripts.train"), "--config", config.rnn_config, *gpu_args])
-        return {"artifacts": {"rnn_checkpoint": config.rnn_checkpoint}}
+        return {"metrics": {"resources": _profiling_metrics(config.rnn_config)},
+            "artifacts": {"rnn_checkpoint": config.rnn_checkpoint}}
 
     def test_rnn() -> dict[str, Any]:
         run([
@@ -148,3 +151,19 @@ def _run_command(command: list[str]) -> None:
 
 def _json(value: dict[str, Any]) -> str:
     return json.dumps(value, indent=2)
+
+
+def _profiling_metrics(config_path: str) -> dict[str, float]:
+    config = load_config(config_path)
+    profile_path = Path(config.get("output", "model_path")) / config.get("output", "model_name") / "profiling_metrics.json"
+    if not profile_path.exists():
+        return {}
+    try:
+        data = json.loads(profile_path.read_text(encoding="utf-8"))
+        return {
+            name: float(data[name])
+            for name in ("total_gflops", "avg_gflops_per_batch")
+            if name in data
+        }
+    except (OSError, ValueError, TypeError):
+        return {}
