@@ -43,3 +43,21 @@ def test_bertpli_task_adapters_execute_existing_clis_in_workflow_order(monkeypat
     assert "scripts.poolout" in commands[1]
     assert "scripts.poolout_to_train" in commands[2]
     assert metrics_result.exists()
+
+
+def test_bertpli_training_adapters_attach_existing_profiling_metrics(tmp_path):
+    config_path = tmp_path / "model.config"
+    config_path.write_text("[output]\nmodel_path = " + str(tmp_path) + "\nmodel_name = profile\n")
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir()
+    (profile_dir / "profiling_metrics.json").write_text(
+        '{"total_gflops": 42.0, "avg_gflops_per_batch": 7.0}', encoding="utf-8"
+    )
+    config = BertPliWorkflowConfig(bert_config=str(config_path), rnn_config=str(config_path))
+    functions = build_bertpli_task_functions(config, command_runner=lambda _command: None)
+
+    fine_tune = functions["fine_tune_bert"]()
+    train_rnn = functions["train_attention_rnn"]()
+
+    assert fine_tune["metrics"]["resources"]["total_gflops"] == 42.0
+    assert train_rnn["metrics"]["resources"]["avg_gflops_per_batch"] == 7.0
