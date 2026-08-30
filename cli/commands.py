@@ -15,8 +15,10 @@ from experiment.bertpli_workflow import (
     build_bertpli_task_functions,
     build_bertpli_workflow,
 )
+from experiment.helpers import load_config
 from experiment.persistence import write_workflow_run
 from experiment.task_executor import SequentialWorkflowExecutor
+from experiment.task_telemetry import TaskTelemetryCollector
 
 from .runners import (
     _build_dataset_overrides,
@@ -123,7 +125,10 @@ class BertPliWorkflowCommand(Command):
                     "artifacts": {"metrics": config.metrics_result},
                 },
             }
-        workflow = SequentialWorkflowExecutor(task_functions).execute(definition)
+        monitoring = load_config(config.bert_config).getboolean("monitoring", "enable_monitoring", fallback=False)
+        workflow = SequentialWorkflowExecutor(
+            task_functions, telemetry=TaskTelemetryCollector(enable_emissions=monitoring)
+        ).execute(definition)
         run_dir = write_workflow_run(workflow)
         if args.workflow_dry_run:
             print(f"Workflow BERT-PLI validado sem treinamento: {run_dir}")

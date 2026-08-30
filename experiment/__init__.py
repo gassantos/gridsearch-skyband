@@ -54,6 +54,7 @@ from .task_executor import (  # noqa: F401
     ParallelWorkflowExecutor,
     SequentialWorkflowExecutor,
 )
+from .task_telemetry import TaskTelemetryCollector  # noqa: F401
 from .workflow import (  # noqa: F401
     ExperimentDefinition,
     ExperimentRun,
