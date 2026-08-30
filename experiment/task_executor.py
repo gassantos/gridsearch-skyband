@@ -18,6 +18,7 @@ from typing import Any
 import psutil
 
 from .helpers import now_iso
+from .task_cache import TaskCache
 from .workflow import (
     ExperimentDefinition,
     ExperimentRun,
@@ -33,8 +34,16 @@ TaskCallable = Callable[[], dict[str, Any] | None]
 class SequentialWorkflowExecutor:
     """Executa tarefas independentes ou encadeadas por ``depends_on`` em série."""
 
-    def __init__(self, task_functions: Mapping[str, TaskCallable]) -> None:
+    def __init__(
+        self,
+        task_functions: Mapping[str, TaskCallable],
+        *,
+        cache: TaskCache | None = None,
+        code_version: str | None = None,
+    ) -> None:
         self._task_functions = task_functions
+        self._cache = cache
+        self._code_version = code_version
 
     def execute(
         self,
@@ -51,7 +60,7 @@ class SequentialWorkflowExecutor:
 
         for task in task_plan:
             blocked = any(
-                statuses.get(dependency) is not TaskStatus.SUCCEEDED
+                statuses.get(dependency) not in {TaskStatus.SUCCEEDED, TaskStatus.CACHED}
                 for dependency in task.depends_on
             )
             if blocked:
@@ -62,7 +71,7 @@ class SequentialWorkflowExecutor:
                 continue
 
             previous = previous_tasks.get(task.task_id)
-            if previous and previous.status is TaskStatus.SUCCEEDED:
+            if previous and previous.status in {TaskStatus.SUCCEEDED, TaskStatus.CACHED}:
                 task_runs.append(previous)
                 statuses[task.task_id] = previous.status
                 continue
@@ -79,16 +88,28 @@ class SequentialWorkflowExecutor:
                     statuses[task.task_id] = previous.status
                     continue
 
-            task_fn = self._task_functions.get(task.task_id)
-            if task_fn is None:
-                raise ValueError(f"Nenhuma função registrada para a tarefa '{task.task_id}'.")
-
-            task_run = self._execute_task(task, task_fn, previous)
+            cache = self._cache
+            signature = (
+                cache.signature(task, self._code_version)
+                if cache and self._code_version
+                else None
+            )
+            cached = cache.get(signature) if cache and signature else None
+            if cached:
+                task_run = self._cached_task_run(task, cached)
+            else:
+                task_fn = self._task_functions.get(task.task_id)
+                if task_fn is None:
+                    raise ValueError(f"Nenhuma função registrada para a tarefa '{task.task_id}'.")
+                task_run = self._execute_task(task, task_fn, previous)
+                if task_run.status is TaskStatus.SUCCEEDED and cache and signature:
+                    attempt = task_run.attempts[-1]
+                    cache.put(signature, metrics=attempt.metrics, artifacts=attempt.artifacts)
             task_runs.append(task_run)
             statuses[task.task_id] = task_run.status
 
         required_failed = any(
-            task.required and statuses[task.task_id] is not TaskStatus.SUCCEEDED
+            task.required and statuses[task.task_id] not in {TaskStatus.SUCCEEDED, TaskStatus.CACHED}
             for task in definition.tasks
         )
         return ExperimentRun(
@@ -97,6 +118,19 @@ class SequentialWorkflowExecutor:
             status="failed" if required_failed else "success",
             tasks=task_runs,
         )
+
+    @staticmethod
+    def _cached_task_run(task, cached: dict[str, Any]) -> TaskRun:
+        attempt = TaskExecutionAttempt(
+            attempt_id=str(uuid.uuid4()),
+            attempt_number=1,
+            status=TaskStatus.CACHED,
+            started_at=now_iso(),
+            completed_at=now_iso(),
+            metrics={**cached.get("metrics", {}), "cache_hit": True},
+            artifacts=cached.get("artifacts", {}),
+        )
+        return TaskRun(task.task_id, task.name, task.task_type, TaskStatus.CACHED, [attempt])
 
     @staticmethod
     def _execute_task(

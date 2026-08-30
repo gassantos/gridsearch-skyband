@@ -2,6 +2,7 @@
 
 import pytest
 
+from experiment.task_cache import TaskCache
 from experiment.task_executor import SequentialWorkflowExecutor
 from experiment.workflow import (
     ExperimentDefinition,
@@ -308,6 +309,58 @@ def test_sequential_executor_resume_reexecutes_interrupted_task():
     assert [attempt.attempt_number for attempt in workflow.tasks[0].attempts] == [1, 2]
     assert workflow.tasks[0].attempts[0].status is TaskStatus.RUNNING
     assert workflow.tasks[0].attempts[1].status is TaskStatus.SUCCEEDED
+
+
+def test_sequential_executor_reuses_cached_successful_task(tmp_path):
+    definition = ExperimentDefinition(
+        name="workflow",
+        tasks=(
+            TaskDefinition(
+                "prepare", "Preparar", config={"dataset": "v1"}, input_signatures={"raw": "abc"}
+            ),
+        ),
+    )
+    cache = TaskCache(tmp_path)
+    calls = 0
+
+    def prepare() -> dict:
+        nonlocal calls
+        calls += 1
+        return {"artifacts": {"dataset": "prepared.json"}}
+
+    executor = SequentialWorkflowExecutor({"prepare": prepare}, cache=cache, code_version="commit-a")
+    first = executor.execute(definition)
+    second = executor.execute(definition)
+
+    assert first.tasks[0].status is TaskStatus.SUCCEEDED
+    assert second.status == "success"
+    assert second.tasks[0].status is TaskStatus.CACHED
+    assert second.tasks[0].attempts[0].metrics["cache_hit"] is True
+    assert calls == 1
+
+
+def test_task_cache_invalidates_when_input_or_code_version_changes(tmp_path):
+    cache = TaskCache(tmp_path)
+    calls = 0
+
+    def prepare() -> dict:
+        nonlocal calls
+        calls += 1
+        return {}
+
+    original = ExperimentDefinition(
+        "workflow", (TaskDefinition("prepare", "Preparar", input_signatures={"raw": "v1"}),)
+    )
+    changed_input = ExperimentDefinition(
+        "workflow", (TaskDefinition("prepare", "Preparar", input_signatures={"raw": "v2"}),)
+    )
+    SequentialWorkflowExecutor({"prepare": prepare}, cache=cache, code_version="commit-a").execute(original)
+    input_run = SequentialWorkflowExecutor({"prepare": prepare}, cache=cache, code_version="commit-a").execute(changed_input)
+    code_run = SequentialWorkflowExecutor({"prepare": prepare}, cache=cache, code_version="commit-b").execute(original)
+
+    assert input_run.tasks[0].status is TaskStatus.SUCCEEDED
+    assert code_run.tasks[0].status is TaskStatus.SUCCEEDED
+    assert calls == 3
 
 
 def test_planner_orders_dependencies_before_dependents():

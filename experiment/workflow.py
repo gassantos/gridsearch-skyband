@@ -24,17 +24,19 @@ class TaskStatus(StrEnum):
     READY = "ready"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
+    CACHED = "cached"
     FAILED = "failed"
     CANCELLED = "cancelled"
     SKIPPED = "skipped"
 
 
 _VALID_TRANSITIONS = {
-    TaskStatus.CREATED: {TaskStatus.READY, TaskStatus.CANCELLED, TaskStatus.SKIPPED},
+    TaskStatus.CREATED: {TaskStatus.READY, TaskStatus.CACHED, TaskStatus.CANCELLED, TaskStatus.SKIPPED},
     TaskStatus.READY: {TaskStatus.RUNNING, TaskStatus.CANCELLED, TaskStatus.SKIPPED},
     TaskStatus.RUNNING: {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.CANCELLED},
     TaskStatus.FAILED: {TaskStatus.READY},
     TaskStatus.SUCCEEDED: set(),
+    TaskStatus.CACHED: set(),
     TaskStatus.CANCELLED: set(),
     TaskStatus.SKIPPED: set(),
 }
@@ -79,6 +81,7 @@ class TaskDefinition:
     required: bool = True
     retry_policy: RetryPolicy = field(default_factory=RetryPolicy)
     config: dict[str, Any] = field(default_factory=dict)
+    input_signatures: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

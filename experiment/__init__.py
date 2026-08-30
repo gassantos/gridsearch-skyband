@@ -26,6 +26,7 @@ from .helpers import (  # noqa: F401
 )
 from .persistence import load_workflow_run  # noqa: F401
 from .runner import execute_experiment  # noqa: F401
+from .task_cache import TaskCache  # noqa: F401
 from .task_executor import SequentialWorkflowExecutor  # noqa: F401
 from .workflow import (  # noqa: F401
     ExperimentDefinition,
