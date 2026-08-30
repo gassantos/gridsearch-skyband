@@ -168,7 +168,9 @@ def train(parameters, config, gpu_list):
     optimizer_type = config.get("train", "optimizer")
     if optimizer_type == "bert_adam":
         total_steps = len(dataset) * (epoch - (parameters["trained_epoch"] + 1))
-        num_warmup_steps = int(config.getfloat("train", "warmup_ratio") * total_steps)
+        num_warmup_steps = int(
+            config.getfloat("train", "warmup_ratio", fallback=0.1) * total_steps
+        )
         warmup_scheduler = get_linear_schedule_with_warmup(
             optimizer,
             num_warmup_steps=num_warmup_steps,
@@ -222,16 +224,17 @@ def train(parameters, config, gpu_list):
             # Profile specific batches
             if should_profile and step < 3:
                 activities = [ProfilerActivity.CPU]
+                assert device is not None
                 if device.type == "cuda":
                     activities.append(ProfilerActivity.CUDA)
                 
-                with profile(
+                with profile(  # noqa: SIM117
                     activities=activities,
                     record_shapes=True,
                     with_flops=True
                 ) as prof:
                     with record_function("model_forward"):
-                        with torch.amp.autocast(device.type, dtype=amp_dtype, enabled=use_amp):
+                        with torch.amp.autocast(device.type, dtype=amp_dtype, enabled=use_amp): # type: ignore
                             results = model(data, config, gpu_list, acc_result, "train")
                             loss, acc_result = results["loss"], results["acc_result"]
                 
@@ -242,7 +245,7 @@ def train(parameters, config, gpu_list):
                 
                 logger.info("Profiled batch %d: %.2f GFLOPs", step, total_flops / 1e9)
             else:
-                with torch.amp.autocast(device.type, dtype=amp_dtype, enabled=use_amp):
+                with torch.amp.autocast(device.type, dtype=amp_dtype, enabled=use_amp): # type: ignore
                     results = model(data, config, gpu_list, acc_result, "train")
                     loss, acc_result = results["loss"], results["acc_result"]
             
@@ -259,7 +262,7 @@ def train(parameters, config, gpu_list):
             if step % output_time == 0:
                 output_info = output_function(acc_result, config)
 
-                output_value(current_epoch, "train", "%d/%d" % (step + 1, total_len), "%s/%s" % (
+                output_value(current_epoch, "train", "%d/%d" % (step + 1, total_len), "{}/{}".format(
                     gen_time_str(timer() - start_time), gen_time_str((timer() - start_time) * (total_len - step - 1) / (step + 1))),
                              "%.3lf" % (total_loss / (step + 1)), output_info, '\r', config)
 
