@@ -124,7 +124,7 @@ Configurações padrão:
 
     parser.add_argument(
         "--workflow",
-        choices=["bertpli"],
+        choices=["bertpli", "generic"],
         default=None,
         help="Executa um workflow declarativo em vez dos modos single/grid.",
     )
@@ -133,6 +133,14 @@ Configurações padrão:
         "--workflow-dry-run",
         action="store_true",
         help="Valida o encadeamento do workflow sem executar os treinamentos.",
+    )
+
+    parser.add_argument(
+        "--workflow-spec",
+        type=str,
+        default=None,
+        metavar="ARQUIVO",
+        help="Especificacao JSON obrigatoria para --workflow generic.",
     )
 
     parser.add_argument(

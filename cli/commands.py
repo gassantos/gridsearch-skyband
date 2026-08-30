@@ -9,11 +9,17 @@ Autor: Gustavo Alexandre
 
 import argparse
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 from experiment.bertpli_workflow import (
     BertPliWorkflowConfig,
     build_bertpli_task_functions,
     build_bertpli_workflow,
+)
+from experiment.generic_workflow import (
+    build_generic_task_functions,
+    build_generic_workflow,
+    load_generic_workflow_spec,
 )
 from experiment.helpers import load_config
 from experiment.persistence import write_workflow_run
@@ -138,10 +144,40 @@ class BertPliWorkflowCommand(Command):
             raise RuntimeError(f"Workflow BERT-PLI falhou. Manifesto: {run_dir}")
 
 
+class GenericWorkflowCommand(Command):
+    """Executa pipelines ML, DL, NLP ou LLM definidos por JSON."""
+
+    def execute(self, args: argparse.Namespace, sla_dict: dict) -> None:
+        del sla_dict
+        if not args.workflow_spec:
+            raise ValueError("--workflow-spec e obrigatorio para --workflow generic.")
+        spec = load_generic_workflow_spec(Path(args.workflow_spec))
+        commands: list[list[str]] = []
+        functions = build_generic_task_functions(
+            spec, command_runner=commands.append if args.workflow_dry_run else None
+        )
+        workflow = SequentialWorkflowExecutor(
+            functions,
+            telemetry=TaskTelemetryCollector(
+                enable_emissions=spec.enable_emissions,
+                environment_cost_per_hour_usd=spec.environment_cost_per_hour_usd,
+            ),
+        ).execute(build_generic_workflow(spec))
+        run_dir = write_workflow_run(workflow)
+        if args.workflow_dry_run:
+            print(f"Workflow generico validado sem executar comandos: {run_dir}")
+            for command in commands:
+                print(" ".join(command))
+        elif workflow.status != "success":
+            raise RuntimeError(f"Workflow generico falhou. Manifesto: {run_dir}")
+
+
 def _resolve_command(args: argparse.Namespace) -> Command:
     """Mapeia os argumentos do CLI para o Command concreto adequado."""
     if args.workflow == "bertpli":
         return BertPliWorkflowCommand()
+    if args.workflow == "generic":
+        return GenericWorkflowCommand()
     if args.skyband_only:
         return SkybandOnlyCommand()
     if args.mode == "single":

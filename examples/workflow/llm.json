@@ -1,0 +1,36 @@
+{
+  "name": "llm-instruction-tuning",
+  "experiment_type": "llm",
+  "monitoring": {
+    "enable_emissions": false,
+    "environment_cost_per_hour_usd": 2.5
+  },
+  "tasks": [
+    {
+      "task_id": "prepare_dataset",
+      "name": "Preparar dados de instrucoes",
+      "task_type": "prepare",
+      "command": ["python", "scripts/prepare_instruction_data.py"],
+      "config": {"dataset": "data/instructions.jsonl", "max_seq_length": 2048},
+      "input_signatures": {"dataset": "replace-with-dataset-hash"},
+      "artifacts": {"dataset": "output/llm/train.jsonl"}
+    },
+    {
+      "task_id": "fine_tune_llm",
+      "name": "Ajustar LLM",
+      "task_type": "train",
+      "depends_on": ["prepare_dataset"],
+      "command": ["python", "scripts/train_llm.py"],
+      "config": {"model": "meta-llama/Llama-3.1-8B", "method": "lora", "epochs": 2},
+      "artifacts": {"adapter": "output/llm/adapter"}
+    },
+    {
+      "task_id": "evaluate_llm",
+      "name": "Avaliar LLM",
+      "task_type": "evaluate",
+      "depends_on": ["fine_tune_llm"],
+      "command": ["python", "scripts/evaluate_llm.py"],
+      "artifacts": {"report": "output/llm/evaluation.json"}
+    }
+  ]
+}

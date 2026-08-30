@@ -34,6 +34,13 @@ from .bertpli_workflow import (  # noqa: F401
     build_bertpli_workflow,
 )
 from .estimation import estimate_workflow_resources  # noqa: F401
+from .generic_workflow import (  # noqa: F401
+    GenericTaskSpec,
+    GenericWorkflowSpec,
+    build_generic_task_functions,
+    build_generic_workflow,
+    load_generic_workflow_spec,
+)
 from .helpers import (  # noqa: F401
     ENERGY_COST_USD_PER_KWH,
     METRICS_DIR,

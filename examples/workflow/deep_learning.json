@@ -1,0 +1,36 @@
+{
+  "name": "pytorch-image-classification",
+  "experiment_type": "deep_learning",
+  "monitoring": {
+    "enable_emissions": false,
+    "environment_cost_per_hour_usd": 1.2
+  },
+  "tasks": [
+    {
+      "task_id": "prepare_data",
+      "name": "Preparar imagens",
+      "task_type": "prepare",
+      "command": ["python", "scripts/prepare_images.py"],
+      "config": {"dataset": "data/images", "image_size": 224},
+      "input_signatures": {"dataset": "replace-with-dataset-hash"},
+      "artifacts": {"dataset": "output/images/manifest.json"}
+    },
+    {
+      "task_id": "train_model",
+      "name": "Treinar rede neural",
+      "task_type": "train",
+      "depends_on": ["prepare_data"],
+      "command": ["python", "scripts/train_pytorch.py"],
+      "config": {"architecture": "resnet18", "epochs": 20, "batch_size": 32},
+      "artifacts": {"checkpoint": "output/images/checkpoint.pt"}
+    },
+    {
+      "task_id": "evaluate_model",
+      "name": "Avaliar rede neural",
+      "task_type": "evaluate",
+      "depends_on": ["train_model"],
+      "command": ["python", "scripts/evaluate_pytorch.py"],
+      "artifacts": {"predictions": "output/images/predictions.json"}
+    }
+  ]
+}

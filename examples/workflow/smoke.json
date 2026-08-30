@@ -1,0 +1,34 @@
+{
+  "name": "generic-workflow-smoke",
+  "experiment_type": "ml_classic",
+  "monitoring": {
+    "enable_emissions": false
+  },
+  "tasks": [
+    {
+      "task_id": "prepare",
+      "name": "Preparar dados de smoke",
+      "task_type": "prepare",
+      "command": ["uv", "run", "python", "-c", "from pathlib import Path; Path('output/workflow_smoke').mkdir(parents=True, exist_ok=True)"],
+      "artifacts": {"dataset": "output/workflow_smoke/data.json"}
+    },
+    {
+      "task_id": "train",
+      "name": "Treinar modelo de smoke",
+      "task_type": "train",
+      "depends_on": ["prepare"],
+      "command": ["uv", "run", "python", "-c", "from pathlib import Path; Path('output/workflow_smoke/train_metrics.json').write_text('{\"resources\": {\"total_gflops\": 0.001}}', encoding='utf-8')"],
+      "metrics_file": "output/workflow_smoke/train_metrics.json",
+      "artifacts": {"model": "output/workflow_smoke/model.bin"}
+    },
+    {
+      "task_id": "evaluate",
+      "name": "Avaliar modelo de smoke",
+      "task_type": "evaluate",
+      "depends_on": ["train"],
+      "command": ["uv", "run", "python", "-c", "from pathlib import Path; Path('output/workflow_smoke/evaluation_metrics.json').write_text('{\"evaluation\": {\"accuracy\": 1.0}}', encoding='utf-8')"],
+      "metrics_file": "output/workflow_smoke/evaluation_metrics.json",
+      "artifacts": {"report": "output/workflow_smoke/evaluation_metrics.json"}
+    }
+  ]
+}

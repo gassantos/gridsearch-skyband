@@ -1,0 +1,36 @@
+{
+  "name": "huggingface-text-classification",
+  "experiment_type": "nlp",
+  "monitoring": {
+    "enable_emissions": false,
+    "environment_cost_per_hour_usd": 1.2
+  },
+  "tasks": [
+    {
+      "task_id": "tokenize_data",
+      "name": "Tokenizar dataset",
+      "task_type": "prepare",
+      "command": ["python", "scripts/tokenize_dataset.py"],
+      "config": {"dataset": "nyu-mll/glue", "subset": "mrpc", "tokenizer": "bert-base-uncased"},
+      "input_signatures": {"dataset": "glue-mrpc-v1"},
+      "artifacts": {"dataset": "output/nlp/tokenized"}
+    },
+    {
+      "task_id": "fine_tune",
+      "name": "Fine-tuning Transformer",
+      "task_type": "train",
+      "depends_on": ["tokenize_data"],
+      "command": ["python", "scripts/train_transformers.py"],
+      "config": {"model": "bert-base-uncased", "epochs": 3, "batch_size": 16},
+      "artifacts": {"model": "output/nlp/model"}
+    },
+    {
+      "task_id": "evaluate_model",
+      "name": "Avaliar classificacao de texto",
+      "task_type": "evaluate",
+      "depends_on": ["fine_tune"],
+      "command": ["python", "scripts/evaluate_transformers.py"],
+      "artifacts": {"predictions": "output/nlp/predictions.json"}
+    }
+  ]
+}
