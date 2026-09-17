@@ -63,9 +63,14 @@ from .task_executor import (  # noqa: F401
 )
 from .task_telemetry import TaskTelemetryCollector  # noqa: F401
 from .workflow import (  # noqa: F401
+    ArtifactDefinition,
+    ArtifactKind,
+    ExecutionRegime,
     ExperimentDefinition,
     ExperimentRun,
+    ResourceRequirements,
     RetryPolicy,
+    TaskActivity,
     TaskDefinition,
     TaskExecutionAttempt,
     TaskRun,

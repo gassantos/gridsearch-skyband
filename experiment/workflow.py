@@ -30,6 +30,74 @@ class TaskStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class ArtifactKind(StrEnum):
+    """Categorias de artefatos versionados manipulados por workflows."""
+
+    DATA = "data"
+    MODEL = "model"
+    INDEX = "index"
+    INTERACTION = "interaction"
+
+
+class TaskActivity(StrEnum):
+    """Atividades T0--T5 do modelo de workflow de modelos de linguagem."""
+
+    INGESTION = "ingestion"
+    PRETRAINING = "pretraining"
+    ADAPTATION = "adaptation"
+    INDEXING = "indexing"
+    RETRIEVAL_GENERATION = "retrieval_generation"
+    EVALUATION_MONITORING = "evaluation_monitoring"
+    CUSTOM = "custom"
+
+
+class ExecutionRegime(StrEnum):
+    """Regime temporal de uma tarefa."""
+
+    BUILD = "build"
+    SERVICE = "service"
+
+
+@dataclass(frozen=True)
+class ArtifactDefinition:
+    """Artefato imutável, versionado e rastreável de um workflow."""
+
+    artifact_id: str
+    kind: ArtifactKind
+    version: str
+    uri: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.artifact_id:
+            raise ValueError("artifact_id deve ser informado.")
+        if not self.version:
+            raise ValueError("version deve ser informada.")
+
+
+@dataclass(frozen=True)
+class ResourceRequirements:
+    """Requisitos declarados de recursos de uma tarefa."""
+
+    cpu_cores: float | None = None
+    memory_mb: float | None = None
+    gpu_count: int = 0
+    tpu_cores: int = 0
+    coupling_degree: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.cpu_cores is not None and self.cpu_cores < 0:
+            raise ValueError("cpu_cores não pode ser negativo.")
+        if self.memory_mb is not None and self.memory_mb < 0:
+            raise ValueError("memory_mb não pode ser negativo.")
+        if self.gpu_count < 0:
+            raise ValueError("gpu_count não pode ser negativo.")
+        if self.tpu_cores < 0:
+            raise ValueError("tpu_cores não pode ser negativo.")
+        if not 0.0 <= self.coupling_degree <= 1.0:
+            raise ValueError("coupling_degree deve estar entre 0 e 1.")
+
+
 _VALID_TRANSITIONS = {
     TaskStatus.CREATED: {TaskStatus.READY, TaskStatus.CACHED, TaskStatus.CANCELLED, TaskStatus.SKIPPED},
     TaskStatus.READY: {TaskStatus.RUNNING, TaskStatus.CANCELLED, TaskStatus.SKIPPED},
@@ -82,6 +150,21 @@ class TaskDefinition:
     retry_policy: RetryPolicy = field(default_factory=RetryPolicy)
     config: dict[str, Any] = field(default_factory=dict)
     input_signatures: dict[str, str] = field(default_factory=dict)
+    inputs: tuple[ArtifactDefinition, ...] = ()
+    outputs: tuple[ArtifactDefinition, ...] = ()
+    activity: TaskActivity = TaskActivity.CUSTOM
+    regime: ExecutionRegime = ExecutionRegime.BUILD
+    resources: ResourceRequirements = field(default_factory=ResourceRequirements)
+    is_composite: bool = False
+    stop_predicate: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.task_id:
+            raise ValueError("task_id deve ser informado.")
+        if not self.name:
+            raise ValueError("name deve ser informado.")
+        if self.stop_predicate is not None and not self.is_composite:
+            raise ValueError("stop_predicate exige uma tarefa composta.")
 
 
 @dataclass(frozen=True)
