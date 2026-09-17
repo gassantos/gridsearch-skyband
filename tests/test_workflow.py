@@ -8,9 +8,14 @@ from experiment.task_executor import (
     SequentialWorkflowExecutor,
 )
 from experiment.workflow import (
+    ArtifactDefinition,
+    ArtifactKind,
+    ExecutionRegime,
     ExperimentDefinition,
     ExperimentRun,
+    ResourceRequirements,
     RetryPolicy,
+    TaskActivity,
     TaskDefinition,
     TaskExecutionAttempt,
     TaskRun,
@@ -38,6 +43,35 @@ def _legacy_result(status: str = "success") -> dict:
 def test_experiment_definition_requires_a_task():
     with pytest.raises(ValueError, match="ao menos uma tarefa"):
         ExperimentDefinition(name="empty", tasks=())
+
+
+def test_task_definition_declares_versioned_artifacts_activity_and_resources():
+    dataset = ArtifactDefinition("legal-corpus", ArtifactKind.DATA, "v2", "data/legal-v2.jsonl")
+    checkpoint = ArtifactDefinition("bert-legal", ArtifactKind.MODEL, "v1", "models/bert-legal-v1")
+    task = TaskDefinition(
+        "fine_tune", "Ajustar modelo", inputs=(dataset,), outputs=(checkpoint,),
+        activity=TaskActivity.ADAPTATION,
+        resources=ResourceRequirements(cpu_cores=4, memory_mb=8192, gpu_count=1, coupling_degree=0.9),
+        is_composite=True,
+        stop_predicate="validation_loss <= 0.1",
+    )
+
+    assert task.inputs == (dataset,)
+    assert task.outputs == (checkpoint,)
+    assert task.activity is TaskActivity.ADAPTATION
+    assert task.regime is ExecutionRegime.BUILD
+    assert task.resources.coupling_degree == 0.9
+
+
+@pytest.mark.parametrize("coupling_degree", [-0.01, 1.01])
+def test_resource_requirements_reject_invalid_coupling_degree(coupling_degree):
+    with pytest.raises(ValueError, match="entre 0 e 1"):
+        ResourceRequirements(coupling_degree=coupling_degree)
+
+
+def test_non_composite_task_rejects_stop_predicate():
+    with pytest.raises(ValueError, match="tarefa composta"):
+        TaskDefinition("train", "Treinar", stop_predicate="epoch == 3")
 
 
 def test_task_attempt_rejects_invalid_transition():
