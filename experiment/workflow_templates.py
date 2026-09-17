@@ -7,7 +7,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from .generic_workflow import SUPPORTED_EXPERIMENT_TYPES
-from .workflow import ExperimentDefinition, TaskDefinition
+from .workflow import (
+    ExecutionRegime,
+    ExperimentDefinition,
+    ResourceRequirements,
+    TaskActivity,
+    TaskDefinition,
+)
 
 
 @dataclass(frozen=True)
@@ -18,35 +24,52 @@ class WorkflowTaskTemplate:
     name: str
     task_type: str
     depends_on: tuple[str, ...] = ()
+    activity: TaskActivity = TaskActivity.CUSTOM
+    regime: ExecutionRegime = ExecutionRegime.BUILD
+    resources: ResourceRequirements = ResourceRequirements()
 
 
-DOMAIN_WORKFLOW_TEMPLATES: dict[str, tuple[WorkflowTaskTemplate, ...]] = {
-    "ml_classic": (
-        WorkflowTaskTemplate("ingest_data", "Carregar dados", "ingest"),
-        WorkflowTaskTemplate("prepare_features", "Preparar atributos", "prepare", ("ingest_data",)),
-        WorkflowTaskTemplate("train_model", "Treinar modelo", "train", ("prepare_features",)),
-        WorkflowTaskTemplate("evaluate_model", "Avaliar modelo", "evaluate", ("train_model",)),
-    ),
-    "deep_learning": (
-        WorkflowTaskTemplate("ingest_data", "Carregar dados", "ingest"),
-        WorkflowTaskTemplate("prepare_data", "Preparar dados", "prepare", ("ingest_data",)),
-        WorkflowTaskTemplate("train_model", "Treinar modelo", "train", ("prepare_data",)),
-        WorkflowTaskTemplate("validate_model", "Validar modelo", "validate", ("train_model",)),
-        WorkflowTaskTemplate("evaluate_model", "Avaliar modelo", "evaluate", ("validate_model",)),
-    ),
-    "nlp": (
-        WorkflowTaskTemplate("ingest_data", "Carregar textos", "ingest"),
-        WorkflowTaskTemplate("preprocess_text", "Preprocessar textos", "prepare", ("ingest_data",)),
-        WorkflowTaskTemplate("train_model", "Treinar modelo", "train", ("preprocess_text",)),
-        WorkflowTaskTemplate("evaluate_model", "Avaliar modelo", "evaluate", ("train_model",)),
-    ),
-    "llm": (
-        WorkflowTaskTemplate("ingest_data", "Carregar dados", "ingest"),
-        WorkflowTaskTemplate("prepare_corpus", "Preparar corpus", "prepare", ("ingest_data",)),
-        WorkflowTaskTemplate("adapt_model", "Adaptar modelo", "train", ("prepare_corpus",)),
-        WorkflowTaskTemplate("evaluate_model", "Avaliar modelo", "evaluate", ("adapt_model",)),
-        WorkflowTaskTemplate("publish_model", "Publicar modelo", "publish", ("evaluate_model",)),
-    ),
+@dataclass(frozen=True)
+class DomainWorkflowProfile:
+    """Perfil declarativo de um domínio, independente de seu runner futuro."""
+
+    experiment_type: str
+    framework: str
+    tasks: tuple[WorkflowTaskTemplate, ...]
+
+
+DOMAIN_WORKFLOW_PROFILES: dict[str, DomainWorkflowProfile] = {
+    "ml_classic": DomainWorkflowProfile("ml_classic", "scikit-learn", (
+        WorkflowTaskTemplate("ingest_data", "Carregar dados", "ingest", activity=TaskActivity.INGESTION),
+        WorkflowTaskTemplate("prepare_features", "Preparar atributos", "prepare", ("ingest_data",), TaskActivity.INGESTION),
+        WorkflowTaskTemplate("train_model", "Treinar modelo", "train", ("prepare_features",), TaskActivity.ADAPTATION),
+        WorkflowTaskTemplate("evaluate_model", "Avaliar modelo", "evaluate", ("train_model",), TaskActivity.EVALUATION_MONITORING),
+    )),
+    "deep_learning": DomainWorkflowProfile("deep_learning", "pytorch", (
+        WorkflowTaskTemplate("ingest_data", "Carregar dados", "ingest", activity=TaskActivity.INGESTION),
+        WorkflowTaskTemplate("prepare_data", "Preparar dados", "prepare", ("ingest_data",), TaskActivity.INGESTION),
+        WorkflowTaskTemplate("train_model", "Treinar modelo", "train", ("prepare_data",), TaskActivity.ADAPTATION, resources=ResourceRequirements(gpu_count=1, coupling_degree=0.9)),
+        WorkflowTaskTemplate("validate_model", "Validar modelo", "validate", ("train_model",), TaskActivity.EVALUATION_MONITORING, resources=ResourceRequirements(gpu_count=1)),
+        WorkflowTaskTemplate("evaluate_model", "Avaliar modelo", "evaluate", ("validate_model",), TaskActivity.EVALUATION_MONITORING),
+    )),
+    "nlp": DomainWorkflowProfile("nlp", "spacy", (
+        WorkflowTaskTemplate("ingest_data", "Carregar textos", "ingest", activity=TaskActivity.INGESTION),
+        WorkflowTaskTemplate("preprocess_text", "Preprocessar textos", "prepare", ("ingest_data",), TaskActivity.INGESTION),
+        WorkflowTaskTemplate("train_model", "Treinar modelo", "train", ("preprocess_text",), TaskActivity.ADAPTATION),
+        WorkflowTaskTemplate("evaluate_model", "Avaliar modelo", "evaluate", ("train_model",), TaskActivity.EVALUATION_MONITORING),
+    )),
+    "llm": DomainWorkflowProfile("llm", "huggingface", (
+        WorkflowTaskTemplate("ingest_data", "Carregar dados", "ingest", activity=TaskActivity.INGESTION),
+        WorkflowTaskTemplate("prepare_corpus", "Preparar corpus", "prepare", ("ingest_data",), TaskActivity.INGESTION),
+        WorkflowTaskTemplate("adapt_model", "Adaptar modelo", "train", ("prepare_corpus",), TaskActivity.ADAPTATION, resources=ResourceRequirements(gpu_count=1, coupling_degree=0.9)),
+        WorkflowTaskTemplate("evaluate_model", "Avaliar modelo", "evaluate", ("adapt_model",), TaskActivity.EVALUATION_MONITORING, resources=ResourceRequirements(gpu_count=1)),
+        WorkflowTaskTemplate("publish_model", "Publicar modelo", "publish", ("evaluate_model",), TaskActivity.EVALUATION_MONITORING),
+    )),
+}
+
+DOMAIN_WORKFLOW_TEMPLATES = {
+    experiment_type: profile.tasks
+    for experiment_type, profile in DOMAIN_WORKFLOW_PROFILES.items()
 }
 
 
@@ -80,6 +103,9 @@ def build_domain_workflow(
                 depends_on=task.depends_on,
                 config=dict(task_configs.get(task.task_id, {})),
                 input_signatures=dict(task_input_signatures.get(task.task_id, {})),
+                activity=task.activity,
+                regime=task.regime,
+                resources=task.resources,
             )
             for task in template
         ),

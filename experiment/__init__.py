@@ -79,7 +79,9 @@ from .workflow import (  # noqa: F401
 from .workflow_planner import WorkflowPlanner  # noqa: F401
 from .workflow_reporting import workflow_report, workflow_timeline  # noqa: F401
 from .workflow_templates import (  # noqa: F401
+    DOMAIN_WORKFLOW_PROFILES,
     DOMAIN_WORKFLOW_TEMPLATES,
+    DomainWorkflowProfile,
     WorkflowTaskTemplate,
     build_domain_workflow,
 )
