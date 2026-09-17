@@ -502,6 +502,54 @@ def test_planner_orders_dependencies_before_dependents():
     assert [task.task_id for task in plan] == ["prepare", "train", "evaluate"]
 
 
+def test_planner_derives_dependencies_from_versioned_artifacts():
+    dataset = ArtifactDefinition("corpus", ArtifactKind.DATA, "v1")
+    checkpoint = ArtifactDefinition("model", ArtifactKind.MODEL, "v1")
+    definition = ExperimentDefinition(
+        "workflow",
+        (
+            TaskDefinition("train", "Treinar", inputs=(dataset,), outputs=(checkpoint,)),
+            TaskDefinition("prepare", "Preparar", outputs=(dataset,)),
+            TaskDefinition("evaluate", "Avaliar", inputs=(checkpoint,)),
+        ),
+    )
+
+    plan = WorkflowPlanner().plan(definition)
+
+    assert [task.task_id for task in plan] == ["prepare", "train", "evaluate"]
+    assert plan[1].depends_on == ("prepare",)
+    assert plan[2].depends_on == ("train",)
+
+
+def test_planner_rejects_multiple_producers_for_same_artifact_version():
+    dataset = ArtifactDefinition("corpus", ArtifactKind.DATA, "v1")
+    definition = ExperimentDefinition(
+        "workflow",
+        (
+            TaskDefinition("download_a", "Baixar A", outputs=(dataset,)),
+            TaskDefinition("download_b", "Baixar B", outputs=(dataset,)),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="mais de um produtor"):
+        WorkflowPlanner().plan(definition)
+
+
+def test_planner_rejects_input_incompatible_with_internal_producer():
+    produced = ArtifactDefinition("model", ArtifactKind.MODEL, "v1")
+    expected = ArtifactDefinition("model", ArtifactKind.INDEX, "v2")
+    definition = ExperimentDefinition(
+        "workflow",
+        (
+            TaskDefinition("train", "Treinar", outputs=(produced,)),
+            TaskDefinition("retrieve", "Recuperar", inputs=(expected,)),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="artefato incompatível.*model"):
+        WorkflowPlanner().plan(definition)
+
+
 def test_planner_preserves_declaration_order_for_independent_tasks():
     definition = ExperimentDefinition(
         name="workflow",
