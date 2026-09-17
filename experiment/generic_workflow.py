@@ -9,7 +9,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .workflow import ExperimentDefinition, RetryPolicy, TaskDefinition
+from .workflow import (
+    ArtifactDefinition,
+    ArtifactKind,
+    ExecutionRegime,
+    ExperimentDefinition,
+    ResourceRequirements,
+    RetryPolicy,
+    TaskActivity,
+    TaskDefinition,
+)
 
 SUPPORTED_EXPERIMENT_TYPES = frozenset({"ml_classic", "deep_learning", "nlp", "llm"})
 CommandRunner = Callable[[list[str]], None]
@@ -30,6 +39,13 @@ class GenericTaskSpec:
     input_signatures: dict[str, str] = field(default_factory=dict)
     artifacts: dict[str, Any] = field(default_factory=dict)
     metrics_file: str | None = None
+    inputs: tuple[ArtifactDefinition, ...] = ()
+    outputs: tuple[ArtifactDefinition, ...] = ()
+    activity: TaskActivity = TaskActivity.CUSTOM
+    regime: ExecutionRegime = ExecutionRegime.BUILD
+    resources: ResourceRequirements = field(default_factory=ResourceRequirements)
+    is_composite: bool = False
+    stop_predicate: str | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +106,13 @@ def build_generic_workflow(spec: GenericWorkflowSpec) -> ExperimentDefinition:
                 retry_policy=task.retry_policy,
                 config=task.config,
                 input_signatures=task.input_signatures,
+                inputs=task.inputs,
+                outputs=task.outputs,
+                activity=task.activity,
+                regime=task.regime,
+                resources=task.resources,
+                is_composite=task.is_composite,
+                stop_predicate=task.stop_predicate,
             )
             for task in spec.tasks
         ),
@@ -113,6 +136,9 @@ def _task_spec(source: Any) -> GenericTaskSpec:
     command = source.get("command", [])
     if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
         raise ValueError("command deve ser uma lista de strings.")
+    resources = source.get("resources", {})
+    if not isinstance(resources, dict):
+        raise ValueError("resources deve ser um objeto JSON.")  # noqa: TRY004
     return GenericTaskSpec(
         task_id=source["task_id"],
         name=source["name"],
@@ -128,7 +154,36 @@ def _task_spec(source: Any) -> GenericTaskSpec:
         input_signatures=dict(source.get("input_signatures", {})),
         artifacts=dict(source.get("artifacts", {})),
         metrics_file=source.get("metrics_file"),
+        inputs=_artifacts(source.get("inputs", [])),
+        outputs=_artifacts(source.get("outputs", [])),
+        activity=TaskActivity(source.get("activity", TaskActivity.CUSTOM)),
+        regime=ExecutionRegime(source.get("regime", ExecutionRegime.BUILD)),
+        resources=ResourceRequirements(**resources),
+        is_composite=source.get("is_composite", False),
+        stop_predicate=source.get("stop_predicate"),
     )
+
+
+def _artifacts(source: Any) -> tuple[ArtifactDefinition, ...]:
+    if not isinstance(source, list):
+        raise ValueError("inputs e outputs devem ser listas de objetos JSON.")  # noqa: TRY004
+    artifacts: list[ArtifactDefinition] = []
+    for artifact in source:
+        if not isinstance(artifact, dict):
+            raise ValueError("Cada artefato deve ser um objeto JSON.")  # noqa: TRY004
+        metadata = artifact.get("metadata", {})
+        if not isinstance(metadata, dict):
+            raise ValueError("metadata do artefato deve ser um objeto JSON.")  # noqa: TRY004
+        artifacts.append(
+            ArtifactDefinition(
+                artifact_id=artifact["artifact_id"],
+                kind=ArtifactKind(artifact["kind"]),
+                version=artifact["version"],
+                uri=artifact.get("uri"),
+                metadata=dict(metadata),
+            )
+        )
+    return tuple(artifacts)
 
 
 def _task_function(task: GenericTaskSpec, run: CommandRunner) -> Callable[[], dict[str, Any]]:
