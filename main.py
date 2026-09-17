@@ -27,13 +27,12 @@ try:
 except RuntimeError:
     pass
 
-from gridsearch.core import _LOGFILE
-from utils.paths import PathManager
-from utils.log_setup import setup_main_logging
-
-from cli.parser import build_argument_parser
 from cli.commands import _resolve_command
+from cli.parser import build_argument_parser
 from cli.runners import _parse_sla_constraints
+from gridsearch.core import _LOGFILE
+from utils.log_setup import setup_main_logging
+from utils.paths import PathManager
 
 # Configura logging multiprocessing-safe antes de qualquer log.
 # QueueListener é iniciado aqui e parado no finally do main().

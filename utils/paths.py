@@ -2,10 +2,9 @@
 Módulo para gerenciamento de caminhos multiplataforma.
 Usa pathlib para garantir compatibilidade entre sistemas operacionais.
 """
-from pathlib import Path
-from typing import Union, Optional
 import logging
 import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +70,7 @@ class PathManager:
                 logger.debug(f"Directory already exists: {dir_path}")
     
     @staticmethod
-    def ensure_dir(path: Union[str, Path]) -> Path:
+    def ensure_dir(path: str | Path) -> Path:
         """
         Garante que o diretório existe, criando se necessário.
         
@@ -86,7 +85,7 @@ class PathManager:
         return path
     
     @staticmethod
-    def safe_path(path: Union[str, Path]) -> Path:
+    def safe_path(path: str | Path) -> Path:
         """
         Converte string para Path de forma segura, expandindo variáveis.
         
@@ -105,7 +104,7 @@ class PathManager:
         return Path(path).resolve()
     
     @staticmethod
-    def get_relative_path(path: Union[str, Path], base: Optional[Union[str, Path]] = None) -> Path:
+    def get_relative_path(path: str | Path, base: str | Path) -> Path:
         """
         Retorna caminho relativo a partir de uma base.
         
@@ -127,8 +126,8 @@ class PathManager:
             return path
     
     @staticmethod
-    def validate_file_path(path: Union[str, Path], must_exist: bool = True, 
-                          extensions: Optional[list] = None) -> Path:
+    def validate_file_path(path: str | Path, must_exist: bool = True, 
+                          extensions: list[str] | None = None) -> Path:
         """
         Valida um caminho de arquivo.
         
@@ -152,7 +151,7 @@ class PathManager:
         if must_exist and not path.is_file():
             raise ValueError(f"Path is not a file: {path}")
         
-        if extensions:
+        if extensions:  # noqa: SIM102
             if path.suffix.lower() not in [ext.lower() for ext in extensions]:
                 raise ValueError(
                     f"Invalid file extension: {path.suffix}. "
@@ -200,5 +199,5 @@ class PathManager:
 # Inicializa diretórios ao importar o módulo
 try:
     PathManager.setup_directories(verbose=False)
-except Exception as e:
+except Exception as e:  # noqa: BLE001
     logger.warning(f"Could not create all directories: {e}")
