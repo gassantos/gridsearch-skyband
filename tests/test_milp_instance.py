@@ -184,14 +184,22 @@ class TestBuildPsla4mlData:
         assert data.alpha1 + data.alpha2 + data.alpha3 == pytest.approx(1.0)
 
     def test_sla_constraints_mapped_correctly(self):
+        profile = {
+            **SLA_PROFILE_BALANCEADO,
+            "constraints": {
+                **SLA_PROFILE_BALANCEADO["constraints"],
+                "peak_ram_mb": 8192,
+            },
+        }
         data = build_psla4ml_data(
             ENVIRONMENTS_DETAILS, RESULTS,
-            sla_profile=SLA_PROFILE_BALANCEADO, target_grid_experiment_idx=0,
+            sla_profile=profile, target_grid_experiment_idx=0,
         )
         assert data.CM == pytest.approx(5.00)
         assert data.Eref == pytest.approx(0.100)
         assert data.TM == 2
         assert data.DS == pytest.approx(30.0)
+        assert data.MC == pytest.approx(8.0)
 
     def test_missing_sla_profile_uses_documented_defaults(self):
         data = build_psla4ml_data(ENVIRONMENTS_DETAILS, RESULTS, target_grid_experiment_idx=0)
