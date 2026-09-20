@@ -60,6 +60,70 @@ def test_run_single_experiment_attaches_huggingface_workflow_metadata(monkeypatc
     assert json.dumps(result["workflow"])
 
 
+def test_run_single_experiment_keeps_workflow_metadata_when_execution_fails(monkeypatch):
+    def fake_launch_experiment(**_kwargs):
+        raise RuntimeError("launcher failure")
+
+    monkeypatch.setattr("experiment.xla_launcher.launch_experiment", fake_launch_experiment)
+
+    result = run_single_experiment(
+        experiment_idx=3,
+        config_path="ignored.config",
+        params={"environment": "local"},
+        dataset_overrides={"hf_dataset_source": "hub", "hf_dataset_id": "nyu-mll/glue"},
+    )
+
+    assert result["status"] == "failed"
+    assert result["workflow"]["name"] == "grid-experiment-3"
+    assert result["workflow"]["tasks"][0]["outputs"][0]["uri"] == "hf://datasets/nyu-mll/glue"
+
+
+def test_grid_state_persists_workflow_and_resume_keeps_it(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_launch_experiment(**_kwargs):
+        calls.append("launch")
+        return {"experiment": {"id": "worker-result"}, "resources": {}}
+
+    monkeypatch.setattr("experiment.xla_launcher.launch_experiment", fake_launch_experiment)
+    monkeypatch.setattr(
+        executor_mod,
+        "create_config_for_combination",
+        lambda *_args, **_kwargs: "ignored.config",
+    )
+    grid_config = {
+        "hyperparameters": {"learning_rate": [2e-5]},
+        "environments": {
+            "active": ["local"],
+            "details": {"local": {"gpu": "NVIDIA RTX 3090", "vram_gb": 24}},
+        },
+    }
+
+    run_grid_search(
+        base_config_path="ignored.config",
+        grid_config=grid_config,
+        dataset_overrides={"hf_dataset_source": "hub", "hf_dataset_id": "nyu-mll/glue"},
+        output_dir=tmp_path,
+    )
+    state_path = next(tmp_path.glob("grid_search_state_*.json"))
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert calls == ["launch"]
+    assert persisted["results"][0]["workflow"]["tasks"][0]["activity"] == "ingestion"
+
+    run_grid_search(
+        base_config_path="ignored.config",
+        grid_config=grid_config,
+        dataset_overrides={"hf_dataset_source": "hub", "hf_dataset_id": "nyu-mll/glue"},
+        resume=True,
+        output_dir=tmp_path,
+    )
+    resumed = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert calls == ["launch"]
+    assert resumed["results"] == persisted["results"]
+
+
 def test_environment_capacity_registry_extracts_parallel_workers():
     """BL-W2: extrai parallel_workers por ambiente, ignorando entradas invalidas."""
     grid_config = {
