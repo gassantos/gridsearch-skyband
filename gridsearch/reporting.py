@@ -15,17 +15,14 @@ import logging
 import os
 import sys
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from .executor import (
     ENERGY_COST_USD_PER_KWH,
     GRID_OUTPUT_DIR,
     _grid_results_file,
     _grid_summary_file,
-    _resolve_output_dir,
     run_grid_search,
-    save_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,7 +32,7 @@ logger = logging.getLogger(__name__)
 # ANÁLISE DE RESULTADOS
 # ============================================================================
 
-def analyze_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def analyze_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     """
     Analisa resultados e identifica as melhores configurações por múltiplos critérios.
 
@@ -160,7 +157,7 @@ def analyze_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     return analysis
 
 
-def generate_summary_report(analysis: Dict[str, Any]) -> str:
+def generate_summary_report(analysis: dict[str, Any]) -> str:
     """
     Gera relatório textual resumido dos resultados.
 
