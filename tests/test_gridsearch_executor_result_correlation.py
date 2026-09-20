@@ -44,7 +44,11 @@ def test_run_single_experiment_attaches_huggingface_workflow_metadata(monkeypatc
         experiment_idx=7,
         config_path="ignored.config",
         params={"learning_rate": 2e-5, "environment": "local"},
-        dataset_overrides={"hf_dataset_source": "hub", "hf_dataset_id": "nyu-mll/glue"},
+        dataset_overrides={
+            "hf_dataset_source": "hub",
+            "hf_dataset_id": "nyu-mll/glue",
+            "hf_dataset_config": "mrpc",
+        },
         environment_details={"gpu": "NVIDIA RTX 3090", "vram_gb": 24},
         train_dataset="train_task2_v3",
     )
@@ -56,8 +60,35 @@ def test_run_single_experiment_attaches_huggingface_workflow_metadata(monkeypatc
     assert tasks["evaluate_model"]["activity"] == "evaluation_monitoring"
     assert tasks["ingest_dataset"]["outputs"][0]["uri"] == "hf://datasets/nyu-mll/glue"
     assert tasks["ingest_dataset"]["config"]["train_dataset"] == "train_task2_v3"
+    assert tasks["ingest_dataset"]["outputs"][0]["metadata"] == {
+        "source": "hub",
+        "dataset_id": "nyu-mll/glue",
+        "dataset_config": "mrpc",
+        "splits": {"train": "train", "valid": "validation", "test": "test"},
+        "normalization_schema": ["guid", "text_a", "text_b", "label"],
+    }
     assert tasks["adapt_model"]["resources"]["gpu_count"] == 1
     assert json.dumps(result["workflow"])
+
+
+def test_run_single_experiment_declares_local_json_ingestion_metadata(monkeypatch):
+    def fake_launch_experiment(**_kwargs):
+        return {"experiment": {"id": "worker-result"}, "resources": {}}
+
+    monkeypatch.setattr("experiment.xla_launcher.launch_experiment", fake_launch_experiment)
+
+    result = run_single_experiment(
+        experiment_idx=8,
+        config_path="ignored.config",
+        params={},
+        dataset_overrides={"hf_dataset_source": "local_json"},
+        train_dataset="train_task2_v2",
+    )
+    dataset = result["workflow"]["tasks"][0]["outputs"][0]
+
+    assert dataset["uri"] == "data/train_task2_v2.json"
+    assert dataset["metadata"]["source"] == "local_json"
+    assert dataset["metadata"]["splits"]["valid"] == "validation"
 
 
 def test_run_single_experiment_keeps_workflow_metadata_when_execution_fails(monkeypatch):

@@ -127,12 +127,20 @@ def _build_workflow_metadata(
     source = overrides.get("hf_dataset_source", "local_json")
     dataset_id = overrides.get("hf_dataset_id", train_dataset)
     dataset_uri = f"hf://datasets/{dataset_id}" if source == "hub" else f"data/{train_dataset}.json"
+    dataset_metadata = {
+        "source": source,
+        "dataset_id": dataset_id,
+        "splits": {"train": "train", "valid": "validation", "test": "test"},
+        "normalization_schema": ["guid", "text_a", "text_b", "label"],
+    }
+    if "hf_dataset_config" in overrides:
+        dataset_metadata["dataset_config"] = overrides["hf_dataset_config"]
     dataset = ArtifactDefinition(
         artifact_id=f"dataset-{dataset_id}",
         kind=ArtifactKind.DATA,
         version="input",
         uri=dataset_uri,
-        metadata={"source": source, "dataset_id": dataset_id},
+        metadata=dataset_metadata,
     )
     model = ArtifactDefinition(
         artifact_id=f"grid-model-{experiment_idx}",
@@ -162,7 +170,11 @@ def _build_workflow_metadata(
                 task_id="ingest_dataset",
                 name="Carregar dataset",
                 task_type="ingest",
-                config={"train_dataset": train_dataset, **overrides},
+                config={
+                    "train_dataset": train_dataset,
+                    **overrides,
+                    "normalization_schema": ["guid", "text_a", "text_b", "label"],
+                },
                 outputs=(dataset,),
                 activity=TaskActivity.INGESTION,
                 regime=ExecutionRegime.BUILD,
