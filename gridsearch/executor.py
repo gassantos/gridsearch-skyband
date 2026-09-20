@@ -44,6 +44,23 @@ def _get_device_type() -> str:
     return str(_device_type_cache)
 
 
+def _environment_capacity_registry(grid_config: dict[str, Any]) -> dict[str, int]:
+    """Extrai ``parallel_workers`` por ambiente de ``environments.details`` (BL-W2).
+
+    Usado para limitar a alocação de GPU/worker à capacidade declarada de cada
+    ambiente computacional (ex.: Colab T4 = 1 GPU, local RTX 3090 = 2), em vez
+    de assumir sempre a capacidade global do pool de GPUs físicas detectadas.
+    """
+    details = grid_config.get("environments", {}).get("details", {})
+    if not isinstance(details, dict):
+        return {}
+    return {
+        name: int(info["parallel_workers"])
+        for name, info in details.items()
+        if isinstance(info, dict) and info.get("parallel_workers") is not None
+    }
+
+
 # ============================================================================
 # DIRETÓRIOS — defaults injetáveis (DIP)
 # ============================================================================
@@ -291,18 +308,36 @@ def run_grid_search(
                 logger.info("Execução cancelada pelo usuário")
                 sys.exit(0)
 
-    # Distribui GPUs entre workers em round-robin (um worker → uma GPU)
+    # Distribui GPUs entre workers em round-robin, respeitando a capacidade
+    # declarada por ambiente (parallel_workers em environments.details) — BL-W2.
     import torch as _torch
     _available_gpus: list[int] = (
         gpu_ids
         if gpu_ids is not None
         else list(range(_torch.cuda.device_count()))
     )
-    def _gpu_for(idx: int) -> list[int] | None:
-        """Retorna [gpu_id] para o worker `idx`, ou None quando não há GPUs."""
+    env_capacity_registry = _environment_capacity_registry(grid_config)
+    if env_capacity_registry:
+        logger.info(
+            "Capacidade de workers por ambiente carregada (BL-W2): %s",
+            env_capacity_registry,
+        )
+
+    def _gpu_for(idx: int, params: dict[str, Any] | None = None) -> list[int] | None:
+        """Retorna [gpu_id] para o worker `idx`, limitado à capacidade do ambiente selecionado.
+
+        Quando `params["environment"]` tem `parallel_workers` declarado em
+        `environments.details`, o round-robin passa a ciclar apenas sobre essa
+        capacidade (ex.: Colab T4 sempre usa o mesmo slot 0), em vez de ciclar
+        cegamente sobre todo o pool físico de GPUs disponivel.
+        """
         if not _available_gpus:
             return None
-        return [_available_gpus[idx % len(_available_gpus)]]
+        capacity = len(_available_gpus)
+        env_name = (params or {}).get("environment")
+        if env_name and env_name in env_capacity_registry:
+            capacity = max(1, min(capacity, env_capacity_registry[env_name]))
+        return [_available_gpus[idx % capacity]]
 
     def _cost_for_params(params: dict[str, Any]) -> float | None:
         """Retorna cost_per_hour_usd do ambiente selecionado, ou None.
@@ -331,7 +366,7 @@ def run_grid_search(
             futures = {
                 executor.submit(
                     run_single_experiment,
-                    idx, cfg, params, _gpu_for(idx), parallel,
+                    idx, cfg, params, _gpu_for(idx, params), parallel,
                     dataset_overrides,
                     _cost_for_params(params),
                     tpu_cores,
@@ -364,7 +399,7 @@ def run_grid_search(
         logger.info("Executando em modo sequencial | GPUs disponíveis: %s", _available_gpus or "CPU")
         for idx, config_path, params in pending_experiments:
             result = run_single_experiment(
-                idx, config_path, params, _gpu_for(idx),
+                idx, config_path, params, _gpu_for(idx, params),
                 parallel_workers=parallel,
                 dataset_overrides=dataset_overrides,
                 cloud_cost_per_hour_usd=_cost_for_params(params),
@@ -407,7 +442,7 @@ def save_state(
         output_dir: Diretório de saída (Path). None = default do módulo.
     """
     state = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now().astimezone().isoformat(),
         "completed_experiments": list(completed_experiments),
         "results": results,
         "sla_prefilter": sla_prefilter_info or {
