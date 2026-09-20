@@ -1,5 +1,7 @@
 """Testa a correlação direta entre worker de grid e seu resultado."""
 
+import json
+
 import gridsearch.executor as executor_mod
 from gridsearch.executor import (
     _environment_capacity_registry,
@@ -92,3 +94,55 @@ def test_run_grid_search_respects_environment_capacity_in_gpu_assignment(monkeyp
     assert local_gpus <= {(10,), (11,)}
     assert (12,) not in colab_gpus | local_gpus
     assert (13,) not in colab_gpus | local_gpus
+
+
+def test_run_grid_search_persists_resource_catalog_when_environments_present(monkeypatch, tmp_path):
+    """BL-MILP: o estagio de coleta de recursos roda uma vez, antes dos experimentos."""
+    def fake_create_config_for_combination(_base_config_path, _params, idx, **_kwargs):
+        return f"fake_config_{idx}.config"
+
+    def fake_run_single_experiment(experiment_idx, _config_path, params, gpu_list=None, **_kwargs):
+        return {"status": "success", "grid_experiment_idx": experiment_idx, "grid_params": params}
+
+    monkeypatch.setattr(executor_mod, "create_config_for_combination", fake_create_config_for_combination)
+    monkeypatch.setattr(executor_mod, "run_single_experiment", fake_run_single_experiment)
+
+    grid_config = {
+        "hyperparameters": {"learning_rate": [1e-5]},
+        "environments": {
+            "active": ["local"],
+            "details": {"local": {"cost_per_hour_usd": 0.04}},
+        },
+    }
+
+    run_grid_search(
+        base_config_path="ignored.config", grid_config=grid_config,
+        parallel=1, gpu_ids=[0], output_dir=tmp_path,
+    )
+
+    catalog_files = list(tmp_path.glob("resource_catalog_*.json"))
+    assert len(catalog_files) == 1
+    persisted = json.loads(catalog_files[0].read_text(encoding="utf-8"))
+    assert "local" in persisted["resources"]
+    assert "communication_costs" in persisted
+
+
+def test_run_grid_search_skips_resource_catalog_without_environments(tmp_path, monkeypatch):
+    """BL-MILP: sem dimensao environments, nenhum catalogo e persistido."""
+    def fake_create_config_for_combination(_base_config_path, _params, idx, **_kwargs):
+        return f"fake_config_{idx}.config"
+
+    def fake_run_single_experiment(experiment_idx, _config_path, params, gpu_list=None, **_kwargs):
+        return {"status": "success", "grid_experiment_idx": experiment_idx, "grid_params": params}
+
+    monkeypatch.setattr(executor_mod, "create_config_for_combination", fake_create_config_for_combination)
+    monkeypatch.setattr(executor_mod, "run_single_experiment", fake_run_single_experiment)
+
+    grid_config = {"hyperparameters": {"learning_rate": [1e-5]}}
+
+    run_grid_search(
+        base_config_path="ignored.config", grid_config=grid_config,
+        parallel=1, gpu_ids=[0], output_dir=tmp_path,
+    )
+
+    assert list(tmp_path.glob("resource_catalog_*.json")) == []
