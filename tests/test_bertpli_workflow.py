@@ -7,6 +7,7 @@ from experiment.bertpli_workflow import (
     build_bertpli_workflow,
 )
 from experiment.task_executor import SequentialWorkflowExecutor
+from experiment.workflow import ExecutionRegime, TaskActivity
 
 
 def test_bertpli_workflow_defines_expected_dag():
@@ -20,6 +21,45 @@ def test_bertpli_workflow_defines_expected_dag():
         "convert_poolout_train", "convert_poolout_valid"
     )
     assert tasks["evaluate_retrieval"].depends_on == ("test_attention_rnn",)
+
+
+def test_bertpli_workflow_tasks_classified_by_activity_and_regime():
+    """BL-W1: cada tarefa deve refletir a taxonomia T0-T5 do template de workflows."""
+    tasks = {task.task_id: task for task in build_bertpli_workflow(BertPliWorkflowConfig()).tasks}
+
+    expected_activity = {
+        "fine_tune_bert": TaskActivity.ADAPTATION,
+        "poolout": TaskActivity.INGESTION,
+        "convert_poolout_train": TaskActivity.INGESTION,
+        "convert_poolout_valid": TaskActivity.INGESTION,
+        "train_attention_rnn": TaskActivity.ADAPTATION,
+        "test_attention_rnn": TaskActivity.EVALUATION_MONITORING,
+        "evaluate_retrieval": TaskActivity.EVALUATION_MONITORING,
+    }
+    for task_id, activity in expected_activity.items():
+        assert tasks[task_id].activity == activity, task_id
+        assert tasks[task_id].regime == ExecutionRegime.BUILD, task_id
+
+    # Tarefas de treino (atualizam pesos) sao fortemente acopladas e usam GPU.
+    for task_id in ("fine_tune_bert", "train_attention_rnn"):
+        assert tasks[task_id].resources.gpu_count >= 1
+        assert tasks[task_id].resources.coupling_degree == 0.9
+
+    # Tarefas puramente de conversao/metricas nao usam GPU nem tem acoplamento.
+    for task_id in ("convert_poolout_train", "convert_poolout_valid", "evaluate_retrieval"):
+        assert tasks[task_id].resources.gpu_count == 0
+        assert tasks[task_id].resources.coupling_degree == 0.0
+
+
+def test_bertpli_workflow_gpu_count_reflects_config_gpu_string():
+    """BL-W1: gpu_count deriva de BertPliWorkflowConfig.gpu (ex.: '0,1' -> 2)."""
+    tasks_single = {t.task_id: t for t in build_bertpli_workflow(BertPliWorkflowConfig(gpu="0")).tasks}
+    tasks_multi = {t.task_id: t for t in build_bertpli_workflow(BertPliWorkflowConfig(gpu="0,1")).tasks}
+    tasks_auto = {t.task_id: t for t in build_bertpli_workflow(BertPliWorkflowConfig(gpu=None)).tasks}
+
+    assert tasks_single["fine_tune_bert"].resources.gpu_count == 1
+    assert tasks_multi["fine_tune_bert"].resources.gpu_count == 2
+    assert tasks_auto["fine_tune_bert"].resources.gpu_count == 1
 
 
 def test_bertpli_task_adapters_execute_existing_clis_in_workflow_order(monkeypatch, tmp_path):
