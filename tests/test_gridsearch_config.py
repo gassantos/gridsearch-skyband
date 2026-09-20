@@ -10,13 +10,13 @@ Coberturas:
   - Todos os valores de optimizer são strings reconhecidas por init_optimizer
   - BL-05: max_seq_length e num_epochs presentes em todos os grids
   - BL-05: param_mapping.json contém os novos mapeamentos
-  - BL-05: grid_search_quality.json com 9 combinações exatas
+  - BL-05: grid_search_quality.json com 9 combinações de hiperparâmetros (18 com ambientes)
   - BL-05: _estimate_train_time_sec escala com num_epochs e max_seq_length
 """
 import json
-import pytest
 from pathlib import Path
 
+import pytest
 
 CONFIG_DIR = Path(__file__).parents[1] / "gridsearch" / "config"
 
@@ -240,15 +240,22 @@ class TestGridSearchQualityBL05:
         assert len(hp["dropout"]) == 1
         assert len(hp["seed"]) == 1
 
+    def test_hyperparameters_only_nine_combinations(self, quality_cfg):
+        """BL-W2: sem a dimensao environment, o espaco de hiperparametros permanece com 9 combinacoes."""
+        from gridsearch import generate_parameter_grid
+        combos = generate_parameter_grid(quality_cfg["hyperparameters"])
+        assert len(combos) == 9, f"Esperado 9 combinações de hiperparâmetros, obtido {len(combos)}"
+
     def test_exactly_nine_combinations(self, quality_cfg):
+        """BL-W2: a config completa (com environments) gera 9 x 2 ambientes = 18 combinacoes."""
         from gridsearch import generate_parameter_grid
         combos = generate_parameter_grid(quality_cfg)
-        assert len(combos) == 9, f"Esperado 9 combinações, obtido {len(combos)}"
+        assert len(combos) == 18, f"Esperado 18 combinações (9 × 2 ambientes), obtido {len(combos)}"
 
     def test_meta_count_matches_actual(self, quality_cfg):
         from gridsearch import generate_parameter_grid
         combos = generate_parameter_grid(quality_cfg)
-        expected = quality_cfg["_meta"]["total_combinations"]["hyperparameters_only"]
+        expected = quality_cfg["_meta"]["total_combinations"]["with_environments"]
         assert len(combos) == expected
 
 
