@@ -237,7 +237,7 @@ def build_psla4ml_data(
     sla_profile: dict[str, Any] | None = None,
     target_grid_experiment_idx: int | None = None,
     target_result: dict[str, Any] | None = None,
-    resource_catalog: dict[str, dict[str, Any]] | None = None,
+    resource_catalog: dict[str, Any] | None = None,
     processor_types: tuple[str, ...] = DEFAULT_PROCESSOR_TYPES,
     NM: int | None = None,
     DS: float | None = None,
@@ -266,12 +266,15 @@ def build_psla4ml_data(
         target_result: Alternativa a ``target_grid_experiment_idx`` — um
             registro de resultado já selecionado externamente (ex.: pelo
             Skyband), usado apenas para ``Gf`` quando informado.
-        resource_catalog: Catálogo já persistido (via
+        resource_catalog: Catálogo persistido (via
             :func:`read_resource_catalog`) pelo estágio de coleta do
-            ``gridsearch.executor.run_grid_search``. Preenche ``d``/``n``/``g``
-            (e ``c``/``m``/``e`` como fallback) quando ``environments_details``
-            não os declara explicitamente. ``None`` mantém esses campos
-            ausentes quando não persistidos em ``environments_details``.
+            ``gridsearch.executor.run_grid_search``: dict no formato
+            ``{"resources": {env: spec}, "communication_costs": [...]}``.
+            Preenche ``d``/``n``/``g`` (e ``c``/``m``/``e`` como fallback)
+            quando ``environments_details`` não os declara explicitamente, e
+            preenche ``c_comm`` com os custos de comunicação reais
+            (egress público) em vez do zero padrão. ``None`` mantém esses
+            campos ausentes/zerados quando não persistidos.
         processor_types: Conjunto ``P``. Padrão ``("CPU", "GPU", "TPU")``.
         NM: Nº máximo de recursos alocáveis por período. ``None`` usa ``len(R)``.
         DS: Disco requerido pelo usuário. ``None`` lê ``disk_gb`` do perfil
@@ -295,6 +298,8 @@ def build_psla4ml_data(
     R = list(environments_details.keys())
     P = list(processor_types)
 
+    resources_catalog_map = (resource_catalog or {}).get("resources", {})
+
     c: dict[str, float] = {}
     d: dict[str, float] = {}
     m: dict[str, float] = {}
@@ -304,7 +309,7 @@ def build_psla4ml_data(
 
     for r in R:
         details = environments_details[r]
-        cat = (resource_catalog or {}).get(r, {})
+        cat = resources_catalog_map.get(r, {})
 
         if "cost_per_hour_usd" in details:
             c[r] = float(details["cost_per_hour_usd"])
@@ -341,11 +346,19 @@ def build_psla4ml_data(
             elif p in cat_g:
                 g[(r, p)] = float(cat_g[p])
 
-    c_comm = {
-        (i, j): 0.0
-        for idx, i in enumerate(R)
-        for j in R[idx + 1:]
-    }
+    persisted_comm_costs: list[dict[str, Any]] | None = (resource_catalog or {}).get("communication_costs")
+    if persisted_comm_costs:
+        c_comm = {
+            (rec["resource_i"], rec["resource_j"]): float(rec["cost_usd"])
+            for rec in persisted_comm_costs
+            if rec["resource_i"] in R and rec["resource_j"] in R
+        }
+    else:
+        c_comm = {
+            (i, j): 0.0
+            for idx, i in enumerate(R)
+            for j in R[idx + 1:]
+        }
 
     constraints = (sla_profile or {}).get("constraints", {})
     cost_usd = constraints.get("cost_usd")
