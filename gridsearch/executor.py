@@ -237,6 +237,14 @@ def run_single_experiment(
     from experiment.xla_launcher import launch_experiment
 
     logger.info(f"[{experiment_idx}] Iniciando experimento com parâmetros: {params}")
+    workflow_metadata = _build_workflow_metadata(
+        experiment_idx,
+        params,
+        train_dataset=train_dataset,
+        dataset_overrides=dataset_overrides,
+        environment_details=environment_details,
+        tpu_cores=tpu_cores,
+    )
 
     try:
         # Executa experimento nas GPUs designadas
@@ -260,14 +268,7 @@ def run_single_experiment(
         result_data["grid_params"] = params
         result_data["grid_experiment_idx"] = experiment_idx
         result_data["parallel_workers"] = parallel_workers
-        result_data["workflow"] = _build_workflow_metadata(
-            experiment_idx,
-            params,
-            train_dataset=train_dataset,
-            dataset_overrides=dataset_overrides,
-            environment_details=environment_details,
-            tpu_cores=tpu_cores,
-        )
+        result_data["workflow"] = workflow_metadata
         if "environment" in params:
             result_data["selected_environment"] = params["environment"]
         result_data["status"] = "success"
@@ -284,7 +285,8 @@ def run_single_experiment(
             "grid_params": params,
             "status": "failed",
             "error": str(e),
-            "traceback": traceback.format_exc()
+            "traceback": traceback.format_exc(),
+            "workflow": workflow_metadata,
         }
 
 
