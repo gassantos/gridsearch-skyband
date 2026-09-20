@@ -34,14 +34,21 @@ Autor: Gustavo Alexandre
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 import psutil
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_PROCESSOR_TYPES = ("CPU", "GPU", "TPU")
+
+# Nome padronizado do artefato persistido pelo estágio de coleta de recursos.
+RESOURCE_CATALOG_FILENAME_TEMPLATE = "resource_catalog_{device_type}_{date}.json"
 
 
 # ============================================================================
@@ -118,6 +125,33 @@ GPU_CATALOG: dict[str, dict[str, float]] = {
 # em ``environments.details`` (não obtido de API ao vivo — valor configurável).
 DEFAULT_CLOUD_DISK_GB = 100.0
 
+# Estimativa genérica de poder de processamento por núcleo de CPU (GFLOPS).
+# Não é medido/benchmarked; usado apenas quando P inclui "CPU".
+GENERIC_CPU_GFLOPS_PER_CORE = 5.0
+
+# vCPUs por instância de nuvem, inferidos do texto de `label` em
+# environments.details — valores publicados pelos próprios provedores
+# (GCP n1-standard-4 = 4 vCPUs, AWS g4dn.xlarge = 4 vCPUs, Azure NC6s v3 =
+# 6 vCPUs, Colab free tier = 2 vCPUs). Fallback: DEFAULT_CLOUD_CPU_CORES.
+CLOUD_CPU_CORES_BY_LABEL_HINT: dict[str, int] = {
+    "n1-standard-4": 4,
+    "g4dn.xlarge": 4,
+    "nc6s v3": 6,
+    "colab": 2,
+}
+DEFAULT_CLOUD_CPU_CORES = 4
+
+
+def _estimate_cloud_cpu_cores(label: Optional[str]) -> int:
+    """Estima vCPUs de um recurso de nuvem a partir do texto de `label` (catálogo do provedor)."""
+    if not label:
+        return DEFAULT_CLOUD_CPU_CORES
+    normalized = label.lower()
+    for hint, cores in CLOUD_CPU_CORES_BY_LABEL_HINT.items():
+        if hint in normalized:
+            return cores
+    return DEFAULT_CLOUD_CPU_CORES
+
 
 def _match_gpu_catalog(gpu_name: Optional[str]) -> Optional[dict[str, float]]:
     """Casa o nome de GPU declarado/detectado com uma entrada do catálogo estático.
@@ -150,6 +184,7 @@ def build_resource_spec(
     env_details: dict[str, Any],
     *,
     local_hardware: Optional[LocalHardwareSpec] = None,
+    processor_types: tuple[str, ...] = DEFAULT_PROCESSOR_TYPES,
 ) -> dict[str, Any]:
     """Monta a especificação de recurso ``i`` para o modelo MILP PSLA4ML.
 
@@ -158,17 +193,17 @@ def build_resource_spec(
         env_details: Entrada correspondente em ``environments.details``.
         local_hardware: Hardware detectado via :func:`detect_local_hardware`.
             Obrigatório apenas quando ``env_name == "local"``.
+        processor_types: Tipos de processador ``P`` a preencher em ``n_i``/``g_i``.
 
     Returns:
         Dicionário com os parâmetros do modelo: ``c_i`` (custo/hora),
         ``m_i`` (memória em GB), ``d_i`` (disco em GB), ``n_i`` (núcleos
-        por tipo de processador, dict ``{"GPU": int}``), ``g_i`` (GFLOPS
-        por núcleo, dict ``{"GPU": float}``), e ``source`` (rastreabilidade
-        de onde cada campo veio: "detected_local" | "static_catalog" |
-        "declared" | "default").
+        por tipo de processador), ``g_i`` (GFLOPS por núcleo), e ``source``
+        (rastreabilidade: "detected_local" | "static_catalog" | "default").
     """
     c_i = float(env_details.get("cost_per_hour_usd", 0.0))
     gpu_name = env_details.get("gpu")
+    label = env_details.get("label")
 
     if env_name == "local" and local_hardware is not None:
         m_i = local_hardware.gpu_vram_gb or local_hardware.ram_total_gb
@@ -177,6 +212,7 @@ def build_resource_spec(
         catalog = _match_gpu_catalog(local_hardware.gpu_name) or _match_gpu_catalog(gpu_name)
         g_i_gpu = (catalog["fp16_tflops"] * 1000 / catalog["sm_count"]) if catalog else None
         n_i_gpu = sm_count or (catalog["sm_count"] if catalog else None)
+        cpu_cores = local_hardware.cpu_logical_cores
         source = "detected_local"
     else:
         catalog = _match_gpu_catalog(gpu_name)
@@ -184,15 +220,29 @@ def build_resource_spec(
         d_i = float(env_details.get("disk_gb", DEFAULT_CLOUD_DISK_GB))
         n_i_gpu = catalog["sm_count"] if catalog else None
         g_i_gpu = (catalog["fp16_tflops"] * 1000 / catalog["sm_count"]) if catalog else None
+        cpu_cores = _estimate_cloud_cpu_cores(label)
         source = "static_catalog" if catalog else "default"
+
+    n_i: dict[str, float] = {}
+    g_i: dict[str, float] = {}
+    for p in processor_types:
+        if p == "GPU" and n_i_gpu is not None:
+            n_i["GPU"] = n_i_gpu
+            g_i["GPU"] = g_i_gpu
+        elif p == "CPU":
+            n_i["CPU"] = cpu_cores
+            g_i["CPU"] = GENERIC_CPU_GFLOPS_PER_CORE
+        elif p == "TPU":
+            n_i["TPU"] = 0
+            g_i["TPU"] = 0.0
 
     return {
         "resource_id": env_name,
         "c_i": c_i,
         "m_i": m_i,
         "d_i": d_i,
-        "n_i": {"GPU": n_i_gpu} if n_i_gpu is not None else {},
-        "g_i": {"GPU": g_i_gpu} if g_i_gpu is not None else {},
+        "n_i": n_i,
+        "g_i": g_i,
         "gpu_name": gpu_name,
         "source": source,
     }
@@ -245,6 +295,7 @@ def build_resource_catalog(
     *,
     results: Optional[list[dict[str, Any]]] = None,
     local_hardware: Optional[LocalHardwareSpec] = None,
+    processor_types: tuple[str, ...] = DEFAULT_PROCESSOR_TYPES,
 ) -> dict[str, dict[str, Any]]:
     """Monta o catálogo completo de recursos ``R`` para o modelo MILP PSLA4ML.
 
@@ -257,6 +308,7 @@ def build_resource_catalog(
         local_hardware: Hardware local pré-detectado. ``None`` chama
             :func:`detect_local_hardware` automaticamente quando o ambiente
             ``"local"`` estiver presente.
+        processor_types: Tipos de processador ``P`` a preencher em ``n_i``/``g_i``.
 
     Returns:
         Dicionário ``{nome_ambiente: especificação_de_recurso}``.
@@ -268,13 +320,61 @@ def build_resource_catalog(
         hw = local_hardware
         if env_name == "local" and hw is None:
             hw = detect_local_hardware()
-        spec = build_resource_spec(env_name, env_details, local_hardware=hw)
+        spec = build_resource_spec(
+            env_name, env_details, local_hardware=hw, processor_types=processor_types,
+        )
         if results is not None:
             spec["e_i"] = estimate_energy_rate_kwh_per_hour(results, env_name)
         else:
             spec["e_i"] = None
         catalog[env_name] = spec
     return catalog
+
+
+def persist_resource_catalog(
+    catalog: dict[str, dict[str, Any]],
+    output_path: str | Path,
+) -> Path:
+    """Persiste um catálogo de recursos já construído como JSON.
+
+    Args:
+        catalog: Saída de :func:`build_resource_catalog`.
+        output_path: Caminho de destino do arquivo JSON.
+
+    Returns:
+        O ``Path`` do arquivo escrito.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(catalog, f, indent=2, ensure_ascii=False)
+    return output_path
+
+
+def collect_and_persist_resource_catalog(
+    environments_details: dict[str, dict[str, Any]],
+    output_path: str | Path,
+    *,
+    results: Optional[list[dict[str, Any]]] = None,
+    local_hardware: Optional[LocalHardwareSpec] = None,
+    processor_types: tuple[str, ...] = DEFAULT_PROCESSOR_TYPES,
+) -> Path:
+    """Executa o estágio de coleta de recursos e persiste o resultado em JSON.
+
+    Pensado para rodar uma única vez, no início de uma execução de grid
+    search (``gridsearch.executor.run_grid_search``), coletando por detecção
+    local e catálogo estático de provedores de nuvem todos os parâmetros de
+    recurso ``c_i``/``d_i``/``m_i``/``n_i^p``/``g_i^p``/``e_i`` necessários ao
+    modelo MILP PSLA4ML, antes de qualquer experimento ser executado.
+
+    Returns:
+        O ``Path`` do arquivo JSON persistido.
+    """
+    catalog = build_resource_catalog(
+        environments_details, results=results, local_hardware=local_hardware,
+        processor_types=processor_types,
+    )
+    return persist_resource_catalog(catalog, output_path)
 
 
 def communication_cost_matrix(

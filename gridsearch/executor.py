@@ -96,6 +96,11 @@ def _grid_summary_file(output_dir: Path | None = None):
     return base / f"grid_search_summary_{_get_device_type()}_{_TDATE}.txt"
 
 
+def _resource_catalog_file(output_dir: Path | None = None):
+    base = _resolve_output_dir(output_dir)
+    return base / f"resource_catalog_{_get_device_type()}_{_TDATE}.json"
+
+
 # ============================================================================
 # EXECUÇÃO DE EXPERIMENTO ÚNICO
 # ============================================================================
@@ -245,6 +250,22 @@ def run_grid_search(
             completed_experiments = set(state.get("completed_experiments", []))
             all_results = state.get("results", [])
         logger.info(f"Encontrados {len(completed_experiments)} experimentos já concluídos")
+
+    # Estágio 0 — coleta de recursos computacionais (BL-MILP): detecção local
+    # de hardware + catálogo estático de provedores de nuvem, persistidos
+    # antes de qualquer experimento ser executado. Alimenta gridsearch.
+    # milp_instance como um arquivo já pronto para leitura (sem heurística
+    # embutida no leitor da instância MILP).
+    env_details = grid_config.get("environments", {}).get("details")
+    if env_details:
+        from .resource_discovery import collect_and_persist_resource_catalog
+
+        resource_catalog_path = collect_and_persist_resource_catalog(
+            env_details, _resource_catalog_file(output_dir), results=all_results or None,
+        )
+        logger.info(
+            "Estágio de coleta de recursos concluído: %s", resource_catalog_path,
+        )
 
     # Gera grade de parâmetros (preserva índice original para compatibilidade
     # com retomada e rastreabilidade dos artefatos).

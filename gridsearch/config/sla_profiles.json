@@ -17,14 +17,16 @@
       "energy_kwh",
       "peak_ram_mb",
       "emissions_kg_co2",
-      "cost_usd"
+      "cost_usd",
+      "disk_gb"
     ],
     "notes": [
       "Valores null em constraints significam 'sem limite superior'.",
       "skyband_k define a ordem do Skyband recomendada para o perfil.",
       "weights_scalar são usados em compare_skyband_vs_ranking() para benchmark.",
       "Os valores de constraint são referências baseadas em hardware de 2026.",
-      "Ajuste os thresholds conforme o ambiente real de execução."
+      "Ajuste os thresholds conforme o ambiente real de execução.",
+      "disk_gb (BL-MILP): requisito de espaço em disco do usuário (D_S do modelo MILP PSLA4ML); estimativa de referência por perfil, não medida."
     ]
   },
 
@@ -38,7 +40,8 @@
         "train_time_sec":    null,
         "energy_kwh":        null,
         "peak_ram_mb":       null,
-        "emissions_kg_co2":  null
+        "emissions_kg_co2":  null,
+        "disk_gb":           10.0
       },
       "skyband_k": 2,
       "metrics": [
@@ -59,7 +62,8 @@
         "train_time_sec":    null,
         "energy_kwh":        0.050,
         "peak_ram_mb":       null,
-        "emissions_kg_co2":  0.010
+        "emissions_kg_co2":  0.010,
+        "disk_gb":           20.0
       },
       "skyband_k": 2,
       "metrics": [
@@ -80,7 +84,8 @@
         "train_time_sec":    3600,
         "energy_kwh":        null,
         "peak_ram_mb":       null,
-        "emissions_kg_co2":  null
+        "emissions_kg_co2":  null,
+        "disk_gb":           15.0
       },
       "skyband_k": 3,
       "metrics": [
@@ -101,7 +106,8 @@
         "train_time_sec":    7200,
         "energy_kwh":        0.100,
         "peak_ram_mb":       null,
-        "emissions_kg_co2":  0.020
+        "emissions_kg_co2":  0.020,
+        "disk_gb":           30.0
       },
       "skyband_k": 3,
       "metrics": [
@@ -123,7 +129,8 @@
         "train_time_sec":    1800,
         "energy_kwh":        null,
         "peak_ram_mb":       8192,
-        "emissions_kg_co2":  null
+        "emissions_kg_co2":  null,
+        "disk_gb":           10.0
       },
       "skyband_k": 2,
       "metrics": [
@@ -144,7 +151,8 @@
         "train_time_sec":    1800,
         "energy_kwh":        null,
         "peak_ram_mb":       16384,
-        "emissions_kg_co2":  null
+        "emissions_kg_co2":  null,
+        "disk_gb":           50.0
       },
       "skyband_k": 5,
       "metrics": [
