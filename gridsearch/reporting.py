@@ -118,7 +118,7 @@ def analyze_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     )
 
     analysis = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now().astimezone().isoformat(),
         "total_experiments": len(results),
         "successful": len(successful),
         "failed": len(failed),
@@ -174,7 +174,7 @@ def generate_summary_report(analysis: Dict[str, Any]) -> str:
     report.append("=" * 80)
     report.append("GRID SEARCH - RELATÓRIO DE RESULTADOS")
     report.append("=" * 80)
-    report.append(f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+    report.append(f"Data: {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S')}")
     report.append("")
 
     report.append("RESUMO GERAL:")

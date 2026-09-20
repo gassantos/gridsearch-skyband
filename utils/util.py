@@ -108,13 +108,13 @@ def get_device_info():
 # Importa a implementação canônica de utils.device para manter uma única fonte
 # de verdade. A versão anterior neste módulo usava casing diferente ('gpu'/'cpu'
 # vs 'GPU'/'CPU'), gerando inconsistências.
-from utils.device import get_torch_device  # noqa: E402, F811
+from utils.device import get_torch_device
 
 
 def collect_system_info():
     """Coleta todas as informações do sistema de forma dinâmica."""
     return {
-        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'timestamp': datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S'),
         'cpu': get_cpu_info(),
         'ram': get_ram_info(),
         'gpu': get_gpu_info(),
