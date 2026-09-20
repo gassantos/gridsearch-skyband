@@ -15,6 +15,7 @@ import os
 import sys
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -101,6 +102,98 @@ def _resource_catalog_file(output_dir: Path | None = None):
     return base / f"resource_catalog_{_get_device_type()}_{_TDATE}.json"
 
 
+def _build_workflow_metadata(
+    experiment_idx: int,
+    params: dict[str, Any],
+    *,
+    train_dataset: str,
+    dataset_overrides: dict[str, str] | None,
+    environment_details: dict[str, Any] | None,
+    tpu_cores: int,
+) -> dict[str, Any]:
+    """Declara o workflow já executado pelo runner legado, sem reexecutá-lo."""
+    from experiment.workflow import (
+        ArtifactDefinition,
+        ArtifactKind,
+        ExecutionRegime,
+        ExperimentDefinition,
+        ResourceRequirements,
+        TaskActivity,
+        TaskDefinition,
+    )
+
+    overrides = dict(dataset_overrides or {})
+    details = dict(environment_details or {})
+    source = overrides.get("hf_dataset_source", "local_json")
+    dataset_id = overrides.get("hf_dataset_id", train_dataset)
+    dataset_uri = f"hf://datasets/{dataset_id}" if source == "hub" else f"data/{train_dataset}.json"
+    dataset = ArtifactDefinition(
+        artifact_id=f"dataset-{dataset_id}",
+        kind=ArtifactKind.DATA,
+        version="input",
+        uri=dataset_uri,
+        metadata={"source": source, "dataset_id": dataset_id},
+    )
+    model = ArtifactDefinition(
+        artifact_id=f"grid-model-{experiment_idx}",
+        kind=ArtifactKind.MODEL,
+        version="pending",
+    )
+    metrics = ArtifactDefinition(
+        artifact_id=f"grid-metrics-{experiment_idx}",
+        kind=ArtifactKind.DATA,
+        version="pending",
+    )
+    cores = details.get("cores_by_processor", {})
+    cpu_cores = cores.get("CPU") if isinstance(cores, dict) else None
+    vram_gb = details.get("vram_gb")
+    resources = ResourceRequirements(
+        cpu_cores=float(cpu_cores) if cpu_cores is not None else None,
+        memory_mb=float(vram_gb) * 1024 if vram_gb is not None else None,
+        gpu_count=1 if details.get("gpu") else 0,
+        tpu_cores=tpu_cores,
+        coupling_degree=0.9 if details.get("gpu") or tpu_cores else 0.0,
+    )
+    workflow = ExperimentDefinition(
+        name=f"grid-experiment-{experiment_idx}",
+        experiment_type="llm",
+        tasks=(
+            TaskDefinition(
+                task_id="ingest_dataset",
+                name="Carregar dataset",
+                task_type="ingest",
+                config={"train_dataset": train_dataset, **overrides},
+                outputs=(dataset,),
+                activity=TaskActivity.INGESTION,
+                regime=ExecutionRegime.BUILD,
+            ),
+            TaskDefinition(
+                task_id="adapt_model",
+                name="Adaptar modelo",
+                depends_on=("ingest_dataset",),
+                config=dict(params),
+                inputs=(dataset,),
+                outputs=(model,),
+                activity=TaskActivity.ADAPTATION,
+                regime=ExecutionRegime.BUILD,
+                resources=resources,
+            ),
+            TaskDefinition(
+                task_id="evaluate_model",
+                name="Avaliar modelo",
+                task_type="evaluate",
+                depends_on=("adapt_model",),
+                inputs=(model,),
+                outputs=(metrics,),
+                activity=TaskActivity.EVALUATION_MONITORING,
+                regime=ExecutionRegime.BUILD,
+                resources=resources,
+            ),
+        ),
+    )
+    return asdict(workflow)
+
+
 # ============================================================================
 # EXECUÇÃO DE EXPERIMENTO ÚNICO
 # ============================================================================
@@ -115,6 +208,8 @@ def run_single_experiment(
     cloud_cost_per_hour_usd: float | None = None,
     tpu_cores: int = 1,
     environment_overrides: dict[str, str] | None = None,
+    environment_details: dict[str, Any] | None = None,
+    train_dataset: str = "train_task2",
 ) -> dict[str, Any]:
     """
     Executa um único experimento e retorna os resultados.
@@ -165,6 +260,14 @@ def run_single_experiment(
         result_data["grid_params"] = params
         result_data["grid_experiment_idx"] = experiment_idx
         result_data["parallel_workers"] = parallel_workers
+        result_data["workflow"] = _build_workflow_metadata(
+            experiment_idx,
+            params,
+            train_dataset=train_dataset,
+            dataset_overrides=dataset_overrides,
+            environment_details=environment_details,
+            tpu_cores=tpu_cores,
+        )
         if "environment" in params:
             result_data["selected_environment"] = params["environment"]
         result_data["status"] = "success"
@@ -373,6 +476,11 @@ def run_grid_search(
             return None
         return env_cost_registry.get(env_name)
 
+    def _details_for_params(params: dict[str, Any]) -> dict[str, Any] | None:
+        environment = params.get("environment")
+        details = (env_details or {}).get(environment)
+        return details if isinstance(details, dict) else None
+
     # Executa experimentos
     if parallel > 1:
         logger.info(
@@ -392,6 +500,8 @@ def run_grid_search(
                     _cost_for_params(params),
                     tpu_cores,
                     environment_overrides,
+                    _details_for_params(params),
+                    train_dataset,
                 ): idx
                 for idx, cfg, params in pending_experiments
             }
@@ -426,6 +536,8 @@ def run_grid_search(
                 cloud_cost_per_hour_usd=_cost_for_params(params),
                 tpu_cores=tpu_cores,
                 environment_overrides=environment_overrides,
+                environment_details=_details_for_params(params),
+                train_dataset=train_dataset,
             )
             all_results.append(result)
             completed_experiments.add(idx)

@@ -34,6 +34,32 @@ def test_run_single_experiment_uses_returned_result(monkeypatch):
     assert result["grid_experiment_idx"] == 7
 
 
+def test_run_single_experiment_attaches_huggingface_workflow_metadata(monkeypatch):
+    def fake_launch_experiment(**_kwargs):
+        return {"experiment": {"id": "worker-result"}, "resources": {}}
+
+    monkeypatch.setattr("experiment.xla_launcher.launch_experiment", fake_launch_experiment)
+
+    result = run_single_experiment(
+        experiment_idx=7,
+        config_path="ignored.config",
+        params={"learning_rate": 2e-5, "environment": "local"},
+        dataset_overrides={"hf_dataset_source": "hub", "hf_dataset_id": "nyu-mll/glue"},
+        environment_details={"gpu": "NVIDIA RTX 3090", "vram_gb": 24},
+        train_dataset="train_task2_v3",
+    )
+    tasks = {task["task_id"]: task for task in result["workflow"]["tasks"]}
+
+    assert result["workflow"]["experiment_type"] == "llm"
+    assert tasks["ingest_dataset"]["activity"] == "ingestion"
+    assert tasks["adapt_model"]["activity"] == "adaptation"
+    assert tasks["evaluate_model"]["activity"] == "evaluation_monitoring"
+    assert tasks["ingest_dataset"]["outputs"][0]["uri"] == "hf://datasets/nyu-mll/glue"
+    assert tasks["ingest_dataset"]["config"]["train_dataset"] == "train_task2_v3"
+    assert tasks["adapt_model"]["resources"]["gpu_count"] == 1
+    assert json.dumps(result["workflow"])
+
+
 def test_environment_capacity_registry_extracts_parallel_workers():
     """BL-W2: extrai parallel_workers por ambiente, ignorando entradas invalidas."""
     grid_config = {
