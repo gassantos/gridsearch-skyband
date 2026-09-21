@@ -35,6 +35,7 @@ autocontido `examples/workflow/smoke.json` sem `--workflow-dry-run`.
       "task_id": "prepare_data",
       "name": "Preparar dataset",
       "task_type": "prepare",
+      "activity": "ingestion",
       "command": ["python", "prepare.py"],
       "config": {"dataset": "glue", "subset": "mrpc"},
       "input_signatures": {"dataset": "glue-mrpc-v1"},
@@ -44,6 +45,7 @@ autocontido `examples/workflow/smoke.json` sem `--workflow-dry-run`.
       "task_id": "fine_tune",
       "name": "Fine-tuning",
       "task_type": "train",
+      "activity": "adaptation",
       "depends_on": ["prepare_data"],
       "command": ["python", "train.py"],
       "metrics_file": "output/train_metrics.json"
@@ -52,6 +54,7 @@ autocontido `examples/workflow/smoke.json` sem `--workflow-dry-run`.
       "task_id": "evaluate",
       "name": "Avaliar",
       "task_type": "evaluate",
+      "activity": "evaluation_monitoring",
       "depends_on": ["fine_tune"],
       "command": ["python", "evaluate.py"],
       "metrics_file": "output/evaluation_metrics.json"
@@ -69,6 +72,10 @@ acrescenta tempo, RAM, VRAM, energia, emissoes e custo por tentativa.
 O workflow generico orquestra ferramentas externas; ele nao impoe uma
 biblioteca de treinamento. Assim, o mesmo contrato atende scikit-learn,
 PyTorch, TensorFlow e Hugging Face Transformers.
+
+Toda especificação deve declarar, nesta ordem, ao menos uma tarefa de
+`ingestion`, uma de `adaptation` e uma de `evaluation_monitoring`. Tarefas
+adicionais podem refinar essas atividades, mas não podem usar `custom`.
 
 ## Etapas Base Por Dominio
 
