@@ -8,6 +8,7 @@ Autor: Gustavo Alexandre
 """
 
 import argparse
+import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -22,7 +23,8 @@ from experiment.generic_workflow import (
     load_generic_workflow_spec,
 )
 from experiment.helpers import load_config
-from experiment.persistence import write_workflow_run
+from experiment.persistence import load_workflow_run, write_workflow_run
+from experiment.task_cache import TaskCache
 from experiment.task_executor import SequentialWorkflowExecutor
 from experiment.task_telemetry import TaskTelemetryCollector
 from experiment.workflow import ResourceRequirements
@@ -39,6 +41,21 @@ from .runners import (
     run_single_experiment,
     run_skyband_analysis,
 )
+
+
+def _workflow_code_version() -> str:
+    """Obtém a revisão Git usada para invalidar cache após mudanças de código."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "unversioned"
+    return result.stdout.strip() or "unversioned"
 
 
 class Command(ABC):
@@ -119,6 +136,12 @@ class SingleCommand(Command):
         monitoring = load_config(args.config).getboolean(
             "monitoring", "enable_monitoring", fallback=False,
         )
+        definition = build_huggingface_workflow(config)
+        resume_from = (
+            load_workflow_run(Path(args.workflow_resume_run))
+            if args.workflow_resume_run else None
+        )
+        cache = TaskCache(Path(args.workflow_cache_dir)) if args.workflow_cache_dir else None
         workflow = SequentialWorkflowExecutor(
             build_huggingface_task_functions(
                 config,
@@ -128,8 +151,10 @@ class SingleCommand(Command):
                 environment_overrides={"precision": args.precision} if args.precision else None,
                 tpu_cores=args.tpu_cores,
             ),
+            cache=cache,
+            code_version=_workflow_code_version() if cache else None,
             telemetry=TaskTelemetryCollector(enable_emissions=monitoring),
-        ).execute(build_huggingface_workflow(config))
+        ).execute(definition, resume_from=resume_from)
         run_dir = write_workflow_run(workflow)
         if workflow.status != "success":
             raise RuntimeError(f"Workflow Hugging Face falhou. Manifesto: {run_dir}")

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -13,6 +15,7 @@ from .workflow import (
     ExecutionRegime,
     ExperimentDefinition,
     ResourceRequirements,
+    RetryPolicy,
     TaskActivity,
     TaskDefinition,
 )
@@ -182,6 +185,24 @@ def build_huggingface_workflow(config: HuggingFaceWorkflowConfig) -> ExperimentD
         kind=ArtifactKind.DATA,
         version=config.metrics_version,
     )
+    dataset_signature = _semantic_signature({
+        "source": config.dataset_source,
+        "dataset_id": config.dataset_id,
+        "dataset_config": config.dataset_config,
+        "revision": config.dataset_version,
+        "splits": config.dataset_splits,
+        "normalization_schema": config.normalization_schema,
+        "parameters": config.ingestion_parameters,
+    })
+    model_signature = _semantic_signature({
+        "dataset": dataset_signature,
+        "model_version": config.model_version,
+        "parameters": config.adaptation_parameters,
+    })
+    evaluation_signature = _semantic_signature({
+        "model": model_signature,
+        "metrics_version": config.metrics_version,
+    })
 
     return ExperimentDefinition(
         name=config.name,
@@ -198,6 +219,7 @@ def build_huggingface_workflow(config: HuggingFaceWorkflowConfig) -> ExperimentD
                     "normalization_schema": list(config.normalization_schema),
                     **config.ingestion_parameters,
                 },
+                input_signatures={"dataset": dataset_signature},
                 outputs=(dataset,),
                 activity=TaskActivity.INGESTION,
                 regime=ExecutionRegime.BUILD,
@@ -206,6 +228,7 @@ def build_huggingface_workflow(config: HuggingFaceWorkflowConfig) -> ExperimentD
                 task_id="adapt_model",
                 name="Adaptar modelo",
                 config=dict(config.adaptation_parameters),
+                input_signatures={"dataset": dataset_signature, "model": model_signature},
                 inputs=(dataset,),
                 outputs=(model,),
                 activity=TaskActivity.ADAPTATION,
@@ -216,11 +239,13 @@ def build_huggingface_workflow(config: HuggingFaceWorkflowConfig) -> ExperimentD
                 task_id="evaluate_model",
                 name="Avaliar modelo",
                 task_type="evaluate",
+                input_signatures={"model": model_signature, "evaluation": evaluation_signature},
                 inputs=(model,),
                 outputs=(metrics,),
                 activity=TaskActivity.EVALUATION_MONITORING,
                 regime=ExecutionRegime.BUILD,
                 resources=config.resources,
+                retry_policy=RetryPolicy(max_attempts=2),
             ),
         ),
     )
@@ -289,7 +314,10 @@ def build_huggingface_task_functions(
         model_record["uri"] = model_record["uri"] or _checkpoint_uri(config_path)
         resources = result.get("resources", {})
         return {
-            "metrics": {"resources": dict(resources)},
+            "metrics": {
+                "resources": dict(resources),
+                "projected_evaluation": result.get("evaluation") or {},
+            },
             "artifacts": {"model": model_record, "checkpoint": model_record},
         }
 
@@ -303,6 +331,13 @@ def build_huggingface_task_functions(
             "metrics": {"evaluation": result.get("evaluation") or {}},
             "artifacts": {"metrics": _artifact_record(metrics)},
         }
+
+    def restore_adaptation(metrics: Mapping[str, Any]) -> None:
+        evaluation = metrics.get("projected_evaluation")
+        if isinstance(evaluation, dict):
+            result_holder["result"] = {"evaluation": evaluation}
+
+    setattr(adapt_model, "restore_cached_result", restore_adaptation)
 
     return {
         "ingest_dataset": ingest_dataset,
@@ -360,6 +395,11 @@ def _artifact_record(artifact: ArtifactDefinition) -> dict[str, Any]:
         "uri": artifact.uri,
         "metadata": dict(artifact.metadata),
     }
+
+
+def _semantic_signature(value: Mapping[str, Any]) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _checkpoint_uri(config_path: str) -> str | None:
