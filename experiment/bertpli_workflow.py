@@ -25,6 +25,8 @@ from tools.eval_tool import compute_metrics, parse_gru_results
 
 from .helpers import load_config
 from .workflow import (
+    ArtifactDefinition,
+    ArtifactKind,
     ExecutionRegime,
     ExperimentDefinition,
     ResourceRequirements,
@@ -73,12 +75,73 @@ def build_bertpli_workflow(config: BertPliWorkflowConfig) -> ExperimentDefinitio
     (lote), pois o workflow nao expoe um subgrafo de servico.
     """
     gpu_count = _gpu_count(config.gpu)
+    train_data = ArtifactDefinition(
+        artifact_id="bertpli-train-data",
+        kind=ArtifactKind.DATA,
+        version="input",
+        uri=config.train_input,
+    )
+    valid_data = ArtifactDefinition(
+        artifact_id="bertpli-valid-data",
+        kind=ArtifactKind.DATA,
+        version="input",
+        uri=config.valid_input,
+    )
+    labels = ArtifactDefinition(
+        artifact_id="bertpli-test-labels",
+        kind=ArtifactKind.DATA,
+        version="input",
+        uri=config.labels_file,
+    )
+    bert_model = ArtifactDefinition(
+        artifact_id="bertpli-bert-model",
+        kind=ArtifactKind.MODEL,
+        version="fine-tuned",
+        uri=config.bert_checkpoint,
+    )
+    poolout_features = ArtifactDefinition(
+        artifact_id="bertpli-poolout-features",
+        kind=ArtifactKind.DATA,
+        version="generated",
+        uri=config.poolout_result,
+    )
+    train_features = ArtifactDefinition(
+        artifact_id="bertpli-train-features",
+        kind=ArtifactKind.DATA,
+        version="generated",
+        uri=config.train_poolout,
+    )
+    valid_features = ArtifactDefinition(
+        artifact_id="bertpli-valid-features",
+        kind=ArtifactKind.DATA,
+        version="generated",
+        uri=config.valid_poolout,
+    )
+    rnn_model = ArtifactDefinition(
+        artifact_id="bertpli-rnn-model",
+        kind=ArtifactKind.MODEL,
+        version="trained",
+        uri=config.rnn_checkpoint,
+    )
+    predictions = ArtifactDefinition(
+        artifact_id="bertpli-predictions",
+        kind=ArtifactKind.INTERACTION,
+        version="generated",
+        uri=config.test_result,
+    )
+    metrics = ArtifactDefinition(
+        artifact_id="bertpli-evaluation-metrics",
+        kind=ArtifactKind.DATA,
+        version="generated",
+        uri=config.metrics_result,
+    )
     return ExperimentDefinition(
         name="bertpli-reference-workflow",
         experiment_type="nlp",
         tasks=(
             TaskDefinition(
                 "fine_tune_bert", "Fine-tuning BERT", config={"config": config.bert_config},
+                inputs=(train_data,), outputs=(bert_model,),
                 activity=TaskActivity.ADAPTATION, regime=ExecutionRegime.BUILD,
                 resources=ResourceRequirements(gpu_count=gpu_count, coupling_degree=0.9),
             ),
@@ -86,6 +149,7 @@ def build_bertpli_workflow(config: BertPliWorkflowConfig) -> ExperimentDefinitio
                 "poolout", "Extração de interações", depends_on=("fine_tune_bert",),
                 config={"config": config.poolout_config, "checkpoint": config.bert_checkpoint},
                 input_signatures={"bert_checkpoint": config.bert_checkpoint},
+                inputs=(bert_model,), outputs=(poolout_features,),
                 activity=TaskActivity.INGESTION, regime=ExecutionRegime.BUILD,
                 resources=ResourceRequirements(gpu_count=gpu_count, coupling_degree=0.2),
             ),
@@ -93,6 +157,7 @@ def build_bertpli_workflow(config: BertPliWorkflowConfig) -> ExperimentDefinitio
                 "convert_poolout_train", "Conversão pool-out de treino", depends_on=("poolout",),
                 config={"input": config.train_input, "result": config.train_poolout},
                 input_signatures={"poolout": config.poolout_result},
+                inputs=(train_data, poolout_features), outputs=(train_features,),
                 activity=TaskActivity.INGESTION, regime=ExecutionRegime.BUILD,
                 resources=ResourceRequirements(coupling_degree=0.0),
             ),
@@ -100,6 +165,7 @@ def build_bertpli_workflow(config: BertPliWorkflowConfig) -> ExperimentDefinitio
                 "convert_poolout_valid", "Conversão pool-out de validação", depends_on=("poolout",),
                 config={"input": config.valid_input, "result": config.valid_poolout},
                 input_signatures={"poolout": config.poolout_result},
+                inputs=(valid_data, poolout_features), outputs=(valid_features,),
                 activity=TaskActivity.INGESTION, regime=ExecutionRegime.BUILD,
                 resources=ResourceRequirements(coupling_degree=0.0),
             ),
@@ -108,6 +174,7 @@ def build_bertpli_workflow(config: BertPliWorkflowConfig) -> ExperimentDefinitio
                 depends_on=("convert_poolout_train", "convert_poolout_valid"),
                 config={"config": config.rnn_config},
                 input_signatures={"train": config.train_poolout, "valid": config.valid_poolout},
+                inputs=(train_features, valid_features), outputs=(rnn_model,),
                 activity=TaskActivity.ADAPTATION, regime=ExecutionRegime.BUILD,
                 resources=ResourceRequirements(gpu_count=gpu_count, coupling_degree=0.9),
             ),
@@ -115,6 +182,7 @@ def build_bertpli_workflow(config: BertPliWorkflowConfig) -> ExperimentDefinitio
                 "test_attention_rnn", "Inferência Attention-RNN", depends_on=("train_attention_rnn",),
                 config={"config": config.rnn_config, "checkpoint": config.rnn_checkpoint},
                 input_signatures={"rnn_checkpoint": config.rnn_checkpoint},
+                inputs=(rnn_model,), outputs=(predictions,),
                 activity=TaskActivity.EVALUATION_MONITORING, regime=ExecutionRegime.BUILD,
                 resources=ResourceRequirements(gpu_count=gpu_count, coupling_degree=0.1),
             ),
@@ -122,6 +190,7 @@ def build_bertpli_workflow(config: BertPliWorkflowConfig) -> ExperimentDefinitio
                 "evaluate_retrieval", "Avaliação de recuperação", depends_on=("test_attention_rnn",),
                 config={"labels": config.labels_file, "result": config.metrics_result},
                 input_signatures={"predictions": config.test_result},
+                inputs=(labels, predictions), outputs=(metrics,),
                 activity=TaskActivity.EVALUATION_MONITORING, regime=ExecutionRegime.BUILD,
                 resources=ResourceRequirements(coupling_degree=0.0),
             ),

@@ -112,46 +112,16 @@ def _build_workflow_metadata(
     tpu_cores: int,
 ) -> dict[str, Any]:
     """Declara o workflow já executado pelo runner legado, sem reexecutá-lo."""
-    from experiment.workflow import (
-        ArtifactDefinition,
-        ArtifactKind,
-        ExecutionRegime,
-        ExperimentDefinition,
-        ResourceRequirements,
-        TaskActivity,
-        TaskDefinition,
+    from experiment.workflow_templates import (
+        HuggingFaceWorkflowConfig,
+        build_huggingface_workflow,
     )
+    from experiment.workflow import ResourceRequirements
 
     overrides = dict(dataset_overrides or {})
     details = dict(environment_details or {})
     source = overrides.get("hf_dataset_source", "local_json")
     dataset_id = overrides.get("hf_dataset_id", train_dataset)
-    dataset_uri = f"hf://datasets/{dataset_id}" if source == "hub" else f"data/{train_dataset}.json"
-    dataset_metadata = {
-        "source": source,
-        "dataset_id": dataset_id,
-        "splits": {"train": "train", "valid": "validation", "test": "test"},
-        "normalization_schema": ["guid", "text_a", "text_b", "label"],
-    }
-    if "hf_dataset_config" in overrides:
-        dataset_metadata["dataset_config"] = overrides["hf_dataset_config"]
-    dataset = ArtifactDefinition(
-        artifact_id=f"dataset-{dataset_id}",
-        kind=ArtifactKind.DATA,
-        version="input",
-        uri=dataset_uri,
-        metadata=dataset_metadata,
-    )
-    model = ArtifactDefinition(
-        artifact_id=f"grid-model-{experiment_idx}",
-        kind=ArtifactKind.MODEL,
-        version="pending",
-    )
-    metrics = ArtifactDefinition(
-        artifact_id=f"grid-metrics-{experiment_idx}",
-        kind=ArtifactKind.DATA,
-        version="pending",
-    )
     cores = details.get("cores_by_processor", {})
     cpu_cores = cores.get("CPU") if isinstance(cores, dict) else None
     vram_gb = details.get("vram_gb")
@@ -162,47 +132,17 @@ def _build_workflow_metadata(
         tpu_cores=tpu_cores,
         coupling_degree=0.9 if details.get("gpu") or tpu_cores else 0.0,
     )
-    workflow = ExperimentDefinition(
+    workflow = build_huggingface_workflow(HuggingFaceWorkflowConfig(
         name=f"grid-experiment-{experiment_idx}",
-        experiment_type="llm",
-        tasks=(
-            TaskDefinition(
-                task_id="ingest_dataset",
-                name="Carregar dataset",
-                task_type="ingest",
-                config={
-                    "train_dataset": train_dataset,
-                    **overrides,
-                    "normalization_schema": ["guid", "text_a", "text_b", "label"],
-                },
-                outputs=(dataset,),
-                activity=TaskActivity.INGESTION,
-                regime=ExecutionRegime.BUILD,
-            ),
-            TaskDefinition(
-                task_id="adapt_model",
-                name="Adaptar modelo",
-                depends_on=("ingest_dataset",),
-                config=dict(params),
-                inputs=(dataset,),
-                outputs=(model,),
-                activity=TaskActivity.ADAPTATION,
-                regime=ExecutionRegime.BUILD,
-                resources=resources,
-            ),
-            TaskDefinition(
-                task_id="evaluate_model",
-                name="Avaliar modelo",
-                task_type="evaluate",
-                depends_on=("adapt_model",),
-                inputs=(model,),
-                outputs=(metrics,),
-                activity=TaskActivity.EVALUATION_MONITORING,
-                regime=ExecutionRegime.BUILD,
-                resources=resources,
-            ),
-        ),
-    )
+        dataset_source=source,
+        dataset_id=dataset_id,
+        dataset_config=overrides.get("hf_dataset_config"),
+        ingestion_parameters={"train_dataset": train_dataset, **overrides},
+        adaptation_parameters={"train_dataset": train_dataset, **overrides, **params},
+        model_version="pending",
+        metrics_version="pending",
+        resources=resources,
+    ))
     return asdict(workflow)
 
 

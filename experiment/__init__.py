@@ -82,6 +82,8 @@ from .workflow_templates import (  # noqa: F401
     DOMAIN_WORKFLOW_PROFILES,
     DOMAIN_WORKFLOW_TEMPLATES,
     DomainWorkflowProfile,
+    HuggingFaceWorkflowConfig,
     WorkflowTaskTemplate,
     build_domain_workflow,
+    build_huggingface_workflow,
 )
