@@ -7,7 +7,8 @@ from experiment.bertpli_workflow import (
     build_bertpli_workflow,
 )
 from experiment.task_executor import SequentialWorkflowExecutor
-from experiment.workflow import ExecutionRegime, TaskActivity
+from experiment.workflow import ArtifactKind, ExecutionRegime, TaskActivity
+from experiment.workflow_planner import WorkflowPlanner
 
 
 def test_bertpli_workflow_defines_expected_dag():
@@ -21,6 +22,25 @@ def test_bertpli_workflow_defines_expected_dag():
         "convert_poolout_train", "convert_poolout_valid"
     )
     assert tasks["evaluate_retrieval"].depends_on == ("test_attention_rnn",)
+
+
+def test_bertpli_workflow_connects_tasks_by_versioned_artifacts():
+    workflow = build_bertpli_workflow(BertPliWorkflowConfig())
+    tasks = {task.task_id: task for task in workflow.tasks}
+    plan = WorkflowPlanner().plan(workflow)
+
+    assert [task.task_id for task in plan] == [
+        "fine_tune_bert", "poolout", "convert_poolout_train", "convert_poolout_valid",
+        "train_attention_rnn", "test_attention_rnn", "evaluate_retrieval",
+    ]
+    assert tasks["poolout"].inputs == tasks["fine_tune_bert"].outputs
+    assert tasks["train_attention_rnn"].inputs == (
+        *tasks["convert_poolout_train"].outputs,
+        *tasks["convert_poolout_valid"].outputs,
+    )
+    assert tasks["test_attention_rnn"].inputs == tasks["train_attention_rnn"].outputs
+    assert tasks["test_attention_rnn"].outputs[0].kind is ArtifactKind.INTERACTION
+    assert tasks["evaluate_retrieval"].inputs[-1] == tasks["test_attention_rnn"].outputs[0]
 
 
 def test_bertpli_workflow_tasks_classified_by_activity_and_regime():

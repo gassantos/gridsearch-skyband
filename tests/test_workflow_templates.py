@@ -2,11 +2,13 @@
 
 import pytest
 
-from experiment.workflow import TaskActivity
+from experiment.workflow import ArtifactKind, ResourceRequirements, TaskActivity
 from experiment.workflow_planner import WorkflowPlanner
 from experiment.workflow_templates import (
     DOMAIN_WORKFLOW_PROFILES,
+    HuggingFaceWorkflowConfig,
     build_domain_workflow,
+    build_huggingface_workflow,
 )
 
 
@@ -68,3 +70,38 @@ def test_domain_workflow_keeps_model_and_dataset_customization_in_task_profiles(
 def test_domain_workflow_rejects_unsupported_type():
     with pytest.raises(ValueError, match="experiment_type"):
         build_domain_workflow("invalid", "computer_vision")
+
+
+def test_huggingface_workflow_connects_t0_t2_t5_by_versioned_artifacts():
+    workflow = build_huggingface_workflow(HuggingFaceWorkflowConfig(
+        name="hf-mrpc",
+        dataset_source="hub",
+        dataset_id="nyu-mll/glue",
+        dataset_config="mrpc",
+        dataset_version="main",
+        model_version="train-42",
+        metrics_version="eval-42",
+        adaptation_parameters={"learning_rate": 2e-5, "seed": 42},
+        resources=ResourceRequirements(gpu_count=1, coupling_degree=0.9),
+    ))
+
+    tasks = {task.task_id: task for task in workflow.tasks}
+    plan = WorkflowPlanner().plan(workflow)
+
+    assert workflow.experiment_type == "llm"
+    assert [task.task_id for task in plan] == ["ingest_dataset", "adapt_model", "evaluate_model"]
+    assert tasks["ingest_dataset"].activity is TaskActivity.INGESTION
+    assert tasks["ingest_dataset"].outputs[0].kind is ArtifactKind.DATA
+    assert tasks["ingest_dataset"].outputs[0].uri == "hf://datasets/nyu-mll/glue"
+    assert tasks["ingest_dataset"].outputs[0].metadata["dataset_config"] == "mrpc"
+    assert tasks["adapt_model"].depends_on == ()
+    assert tasks["adapt_model"].inputs == tasks["ingest_dataset"].outputs
+    assert tasks["adapt_model"].outputs[0].kind is ArtifactKind.MODEL
+    assert tasks["adapt_model"].resources.coupling_degree == 0.9
+    assert tasks["evaluate_model"].inputs == tasks["adapt_model"].outputs
+    assert tasks["evaluate_model"].outputs[0].version == "eval-42"
+
+
+def test_huggingface_workflow_rejects_unsupported_dataset_source():
+    with pytest.raises(ValueError, match="dataset_source"):
+        HuggingFaceWorkflowConfig(name="invalid", dataset_source="filesystem")
