@@ -255,8 +255,14 @@ def build_huggingface_task_functions(
         metadata = probe()
         workflow = build_huggingface_workflow(workflow_config)
         dataset = workflow.tasks[0].outputs[0]
+        dataset_metrics = {
+            **metadata,
+            "version": dataset.version,
+            "uri": dataset.uri,
+            "splits": dataset.metadata["splits"],
+        }
         return {
-            "metrics": {"dataset": metadata},
+            "metrics": {"dataset": dataset_metrics},
             "artifacts": {"dataset": _artifact_record(dataset)},
         }
 
@@ -279,10 +285,12 @@ def build_huggingface_task_functions(
         result_holder["result"] = result
         workflow = build_huggingface_workflow(workflow_config)
         model = workflow.tasks[1].outputs[0]
+        model_record = _artifact_record(model)
+        model_record["uri"] = model_record["uri"] or _checkpoint_uri(config_path)
         resources = result.get("resources", {})
         return {
             "metrics": {"resources": dict(resources)},
-            "artifacts": {"model": _artifact_record(model)},
+            "artifacts": {"model": model_record, "checkpoint": model_record},
         }
 
     def evaluate_model() -> dict[str, Any]:
@@ -352,6 +360,23 @@ def _artifact_record(artifact: ArtifactDefinition) -> dict[str, Any]:
         "uri": artifact.uri,
         "metadata": dict(artifact.metadata),
     }
+
+
+def _checkpoint_uri(config_path: str) -> str | None:
+    """Resolve o diretório de checkpoints declarado na configuração de treino."""
+    from .helpers import load_config
+
+    try:
+        config = load_config(config_path)
+    except OSError:
+        return None
+    if not config.has_section("output"):
+        return None
+    model_path = config.get("output", "model_path", fallback="").strip()
+    model_name = config.get("output", "model_name", fallback="").strip()
+    if not model_path or not model_name:
+        return None
+    return f"{model_path.rstrip('/')}/{model_name}"
 
 
 def _launch_experiment(**kwargs: Any) -> dict[str, Any] | None:

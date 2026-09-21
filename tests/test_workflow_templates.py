@@ -2,8 +2,10 @@
 
 import pytest
 
+from experiment.aggregation import aggregate_workflow_run
 from experiment.workflow import ArtifactKind, ResourceRequirements, TaskActivity
 from experiment.workflow_planner import WorkflowPlanner
+from experiment.task_telemetry import TaskTelemetryCollector
 from experiment.workflow_templates import (
     DOMAIN_WORKFLOW_PROFILES,
     HuggingFaceWorkflowConfig,
@@ -131,19 +133,29 @@ def test_huggingface_task_adapters_execute_t0_t2_t5_and_project_legacy_result():
         }
 
     workflow = build_huggingface_workflow(workflow_config)
+    tracker = _Tracker()
     result = SequentialWorkflowExecutor(build_huggingface_task_functions(
         workflow_config,
         config_path="ignored.config",
         train_file="train_task2_v3",
         dataset_probe=probe,
         experiment_launcher=launcher,
+    ), telemetry=TaskTelemetryCollector(
+        enable_emissions=True,
+        environment_cost_per_hour_usd=3.6,
+        tracker_factory=lambda: tracker,
     )).execute(workflow)
 
     ingest, adapt, evaluate = result.tasks
     assert result.status == "success"
     assert ingest.attempts[0].metrics["dataset"]["records"] == 42
+    assert ingest.attempts[0].metrics["dataset"]["version"] == "input"
+    assert ingest.attempts[0].metrics["dataset"]["splits"] == {
+        "train": "train", "valid": "validation", "test": "test",
+    }
     assert ingest.attempts[0].artifacts["dataset"]["kind"] == "data"
     assert adapt.attempts[0].artifacts["model"]["kind"] == "model"
+    assert adapt.attempts[0].artifacts["checkpoint"]["uri"] is None
     assert adapt.attempts[0].metrics["resources"]["total_gflops"] == 42.0
     assert evaluate.attempts[0].metrics["evaluation"]["f1_score"] == 0.9
     assert evaluate.attempts[0].artifacts["metrics"]["artifact_id"] == "metrics-hf-mrpc"
@@ -155,6 +167,11 @@ def test_huggingface_task_adapters_execute_t0_t2_t5_and_project_legacy_result():
         "valid_dataset_type": "HuggingFace",
         "test_dataset_type": "HuggingFace",
     }
+    summary = aggregate_workflow_run(result, workflow)
+    assert summary["resources"]["task_time_sec"] is not None
+    assert summary["resources"]["energy_kwh"] == pytest.approx(0.75)
+    assert summary["resources"]["peak_ram_mb"] is not None
+    assert summary["evaluation"] == {"accuracy": 0.8, "f1_score": 0.9}
 
 
 def test_huggingface_task_adapters_skip_t5_after_failed_t2():
@@ -170,3 +187,35 @@ def test_huggingface_task_adapters_skip_t5_after_failed_t2():
     assert result.status == "failed"
     assert result.tasks[1].status.value == "failed"
     assert result.tasks[2].status.value == "skipped"
+
+
+def test_huggingface_t2_records_checkpoint_location_from_training_config(tmp_path):
+    config_path = tmp_path / "train.config"
+    config_path.write_text(
+        "[output]\nmodel_path = output/checkpoints\nmodel_name = hf-model\n",
+        encoding="utf-8",
+    )
+    workflow_config = HuggingFaceWorkflowConfig(name="hf-checkpoint", dataset_source="hub", dataset_id="org/data")
+    workflow = build_huggingface_workflow(workflow_config)
+    result = SequentialWorkflowExecutor(build_huggingface_task_functions(
+        workflow_config,
+        config_path=str(config_path),
+        dataset_probe=lambda: {"records": 1, "fields": [], "source": "hub"},
+        experiment_launcher=lambda **_kwargs: {
+            "experiment": {"status": "success"}, "resources": {}, "evaluation": {},
+        },
+    )).execute(workflow)
+
+    assert result.tasks[1].attempts[0].artifacts["checkpoint"]["uri"] == (
+        "output/checkpoints/hf-model"
+    )
+
+
+class _Tracker:
+    final_emissions_data = type("Data", (), {"energy_consumed": 0.25})()
+
+    def start(self):
+        return None
+
+    def stop(self):
+        return 0.05
