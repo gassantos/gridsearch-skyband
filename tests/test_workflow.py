@@ -400,6 +400,34 @@ def test_task_cache_invalidates_when_input_or_code_version_changes(tmp_path):
     assert calls == 3
 
 
+def test_sequential_executor_reexecutes_success_when_resume_signature_changes():
+    current = ExperimentDefinition(
+        "workflow", (TaskDefinition("prepare", "Preparar", input_signatures={"raw": "v2"}),)
+    )
+    previous = ExperimentRun(
+        "resume-1", "workflow", "success", [
+            TaskRun(
+                "prepare", "Preparar", "train", TaskStatus.SUCCEEDED,
+                [TaskExecutionAttempt("prepare-1", 1, TaskStatus.SUCCEEDED)],
+                input_signatures={"raw": "v1"},
+            )
+        ],
+    )
+    calls = 0
+
+    def prepare() -> dict:
+        nonlocal calls
+        calls += 1
+        return {}
+
+    workflow = SequentialWorkflowExecutor({"prepare": prepare}).execute(
+        current, resume_from=previous
+    )
+
+    assert calls == 1
+    assert workflow.tasks[0].status is TaskStatus.SUCCEEDED
+
+
 def test_parallel_executor_runs_independent_tasks_concurrently():
     definition = ExperimentDefinition(
         "workflow",

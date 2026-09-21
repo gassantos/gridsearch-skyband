@@ -21,6 +21,17 @@ def test_parser_resolves_bertpli_workflow_command():
     assert isinstance(_resolve_command(args), BertPliWorkflowCommand)
 
 
+def test_parser_accepts_huggingface_workflow_cache_and_resume_options():
+    args = build_argument_parser().parse_args([
+        "--mode", "single", "--dataset-source", "hub", "--dataset-id", "org/data",
+        "--workflow-resume-run", "output/experiments/workflow_runs/run-1",
+        "--workflow-cache-dir", "output/experiments/workflow_cache",
+    ])
+
+    assert args.workflow_resume_run.endswith("workflow_runs/run-1")
+    assert args.workflow_cache_dir.endswith("workflow_cache")
+
+
 def test_bertpli_dry_run_persists_workflow(monkeypatch, tmp_path, capsys):
     workflows = []
     monkeypatch.setattr(

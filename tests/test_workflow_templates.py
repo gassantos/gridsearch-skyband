@@ -3,6 +3,7 @@
 import pytest
 
 from experiment.aggregation import aggregate_workflow_run
+from experiment.task_cache import TaskCache
 from experiment.workflow import ArtifactKind, ResourceRequirements, TaskActivity
 from experiment.workflow_planner import WorkflowPlanner
 from experiment.task_telemetry import TaskTelemetryCollector
@@ -209,6 +210,90 @@ def test_huggingface_t2_records_checkpoint_location_from_training_config(tmp_pat
     assert result.tasks[1].attempts[0].artifacts["checkpoint"]["uri"] == (
         "output/checkpoints/hf-model"
     )
+
+
+def test_huggingface_cache_rehydrates_t2_result_when_only_t5_signature_changes(tmp_path):
+    cache = TaskCache(tmp_path)
+    original_config = HuggingFaceWorkflowConfig(
+        name="hf-cache", dataset_source="hub", dataset_id="org/data", metrics_version="v1",
+        adaptation_parameters={"pretrained_model": "bert-base", "seed": 42},
+    )
+    original = build_huggingface_workflow(original_config)
+    first = SequentialWorkflowExecutor(build_huggingface_task_functions(
+        original_config,
+        config_path="ignored.config",
+        dataset_probe=lambda: {"records": 1, "fields": [], "source": "hub"},
+        experiment_launcher=lambda **_kwargs: {
+            "experiment": {"status": "success"}, "resources": {},
+            "evaluation": {"f1_score": 0.9},
+        },
+    ), cache=cache, code_version="commit-a").execute(original)
+
+    changed_config = HuggingFaceWorkflowConfig(
+        name="hf-cache", dataset_source="hub", dataset_id="org/data", metrics_version="v2",
+        adaptation_parameters={"pretrained_model": "bert-base", "seed": 42},
+    )
+    changed = build_huggingface_workflow(changed_config)
+    second = SequentialWorkflowExecutor(build_huggingface_task_functions(
+        changed_config,
+        config_path="ignored.config",
+        dataset_probe=lambda: pytest.fail("T0 não deve executar"),
+        experiment_launcher=lambda **_kwargs: pytest.fail("T2 não deve executar"),
+    ), cache=cache, code_version="commit-a").execute(changed)
+
+    assert first.status == "success"
+    assert [task.status.value for task in second.tasks] == ["cached", "cached", "succeeded"]
+    assert second.tasks[2].attempts[0].metrics["evaluation"] == {"f1_score": 0.9}
+
+
+def test_huggingface_resume_runs_t5_without_rerunning_valid_t0_and_t2():
+    workflow_config = HuggingFaceWorkflowConfig(
+        name="hf-resume", dataset_source="hub", dataset_id="org/data",
+    )
+    definition = build_huggingface_workflow(workflow_config)
+    tasks = {task.task_id: task for task in definition.tasks}
+    from experiment.workflow import ExperimentRun, TaskExecutionAttempt, TaskRun, TaskStatus
+
+    previous = ExperimentRun(
+        "resume-hf", definition.name, "failed", [
+            TaskRun(
+                **_task_run_fields(tasks["ingest_dataset"], TaskStatus.SUCCEEDED),
+                attempts=[TaskExecutionAttempt("t0", 1, TaskStatus.SUCCEEDED)],
+            ),
+            TaskRun(
+                **_task_run_fields(tasks["adapt_model"], TaskStatus.SUCCEEDED),
+                attempts=[TaskExecutionAttempt(
+                    "t2", 1, TaskStatus.SUCCEEDED,
+                    metrics={"projected_evaluation": {"accuracy": 0.8}},
+                )],
+            ),
+            TaskRun(
+                **_task_run_fields(tasks["evaluate_model"], TaskStatus.FAILED),
+                attempts=[TaskExecutionAttempt("t5", 1, TaskStatus.FAILED, error_type="RuntimeError")],
+            ),
+        ],
+    )
+    result = SequentialWorkflowExecutor(build_huggingface_task_functions(
+        workflow_config,
+        config_path="ignored.config",
+        dataset_probe=lambda: pytest.fail("T0 não deve executar"),
+        experiment_launcher=lambda **_kwargs: pytest.fail("T2 não deve executar"),
+    )).execute(definition, resume_from=previous)
+
+    assert result.status == "success"
+    assert [task.status.value for task in result.tasks] == ["succeeded", "succeeded", "succeeded"]
+    assert result.tasks[2].attempts[-1].metrics["evaluation"] == {"accuracy": 0.8}
+
+
+def _task_run_fields(task, status):
+    return {
+        "task_id": task.task_id,
+        "name": task.name,
+        "task_type": task.task_type,
+        "status": status,
+        "config": task.config,
+        "input_signatures": task.input_signatures,
+    }
 
 
 class _Tracker:
