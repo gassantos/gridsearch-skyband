@@ -8,8 +8,10 @@ from experiment.workflow_templates import (
     DOMAIN_WORKFLOW_PROFILES,
     HuggingFaceWorkflowConfig,
     build_domain_workflow,
+    build_huggingface_task_functions,
     build_huggingface_workflow,
 )
+from experiment.task_executor import SequentialWorkflowExecutor
 
 
 @pytest.mark.parametrize(
@@ -105,3 +107,66 @@ def test_huggingface_workflow_connects_t0_t2_t5_by_versioned_artifacts():
 def test_huggingface_workflow_rejects_unsupported_dataset_source():
     with pytest.raises(ValueError, match="dataset_source"):
         HuggingFaceWorkflowConfig(name="invalid", dataset_source="filesystem")
+
+
+def test_huggingface_task_adapters_execute_t0_t2_t5_and_project_legacy_result():
+    workflow_config = HuggingFaceWorkflowConfig(
+        name="hf-mrpc",
+        dataset_source="hub",
+        dataset_id="nyu-mll/glue",
+        dataset_config="mrpc",
+        resources=ResourceRequirements(gpu_count=1, coupling_degree=0.9),
+    )
+    launch_calls = []
+
+    def probe():
+        return {"records": 42, "fields": ["guid", "label", "text_a", "text_b"], "source": "hub"}
+
+    def launcher(**kwargs):
+        launch_calls.append(kwargs)
+        return {
+            "experiment": {"status": "success"},
+            "resources": {"total_gflops": 42.0},
+            "evaluation": {"f1_score": 0.9, "accuracy": 0.8},
+        }
+
+    workflow = build_huggingface_workflow(workflow_config)
+    result = SequentialWorkflowExecutor(build_huggingface_task_functions(
+        workflow_config,
+        config_path="ignored.config",
+        train_file="train_task2_v3",
+        dataset_probe=probe,
+        experiment_launcher=launcher,
+    )).execute(workflow)
+
+    ingest, adapt, evaluate = result.tasks
+    assert result.status == "success"
+    assert ingest.attempts[0].metrics["dataset"]["records"] == 42
+    assert ingest.attempts[0].artifacts["dataset"]["kind"] == "data"
+    assert adapt.attempts[0].artifacts["model"]["kind"] == "model"
+    assert adapt.attempts[0].metrics["resources"]["total_gflops"] == 42.0
+    assert evaluate.attempts[0].metrics["evaluation"]["f1_score"] == 0.9
+    assert evaluate.attempts[0].artifacts["metrics"]["artifact_id"] == "metrics-hf-mrpc"
+    assert launch_calls[0]["dataset_overrides"] == {
+        "hf_dataset_source": "hub",
+        "hf_dataset_id": "nyu-mll/glue",
+        "hf_dataset_config": "mrpc",
+        "train_dataset_type": "HuggingFace",
+        "valid_dataset_type": "HuggingFace",
+        "test_dataset_type": "HuggingFace",
+    }
+
+
+def test_huggingface_task_adapters_skip_t5_after_failed_t2():
+    workflow_config = HuggingFaceWorkflowConfig(name="hf-failure", dataset_source="hub", dataset_id="org/data")
+    workflow = build_huggingface_workflow(workflow_config)
+    result = SequentialWorkflowExecutor(build_huggingface_task_functions(
+        workflow_config,
+        config_path="ignored.config",
+        dataset_probe=lambda: {"records": 1, "fields": [], "source": "hub"},
+        experiment_launcher=lambda **_kwargs: {"experiment": {"status": "failed"}, "logs": {"stderr_tail": "train failed"}},
+    )).execute(workflow)
+
+    assert result.status == "failed"
+    assert result.tasks[1].status.value == "failed"
+    assert result.tasks[2].status.value == "skipped"
