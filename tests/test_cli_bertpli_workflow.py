@@ -12,6 +12,7 @@ from cli.commands import (
     _resolve_command,
 )
 from cli.parser import build_argument_parser
+from cli.runners import run_single_experiment
 
 
 def test_parser_resolves_bertpli_workflow_command():
@@ -50,7 +51,11 @@ def test_generic_workflow_dry_run_persists_multidomain_spec(monkeypatch, tmp_pat
     spec_path = tmp_path / "workflow.json"
     spec_path.write_text(json.dumps({
         "name": "classic", "experiment_type": "ml_classic",
-        "tasks": [{"task_id": "train", "name": "Treinar", "command": ["python", "train.py"]}],
+        "tasks": [
+            {"task_id": "ingest", "name": "Ingerir", "command": ["python", "ingest.py"], "activity": "ingestion"},
+            {"task_id": "train", "name": "Treinar", "command": ["python", "train.py"], "activity": "adaptation"},
+            {"task_id": "evaluate", "name": "Avaliar", "command": ["python", "evaluate.py"], "activity": "evaluation_monitoring"},
+        ],
     }), encoding="utf-8")
     workflows = []
     monkeypatch.setattr(
@@ -117,6 +122,50 @@ def test_single_huggingface_requires_dataset_id_for_hub():
 
     with pytest.raises(ValueError, match="dataset-id"):
         SingleCommand().execute(args, {})
+
+
+def test_single_local_executes_and_persists_workflow(monkeypatch, tmp_path):
+    workflows = []
+    monkeypatch.setattr(
+        "cli.commands.write_workflow_run",
+        lambda workflow: workflows.append(workflow) or tmp_path / workflow.experiment_run_id,
+    )
+    monkeypatch.setattr("cli.commands.load_config", lambda _path: _MonitoringConfig())
+    monkeypatch.setattr("cli.commands.get_torch_device", lambda: {"type": "CPU"})
+    monkeypatch.setattr(
+        "experiment.workflow_templates._launch_experiment",
+        lambda **kwargs: {
+            "experiment": {"status": "success"}, "resources": {}, "evaluation": {},
+        },
+    )
+    args = build_argument_parser().parse_args(["--mode", "single", "--no-skyband"])
+
+    SingleCommand().execute(args, {})
+
+    assert workflows[0].status == "success"
+    assert [task.task_id for task in workflows[0].tasks] == [
+        "ingest_dataset", "adapt_model", "evaluate_model",
+    ]
+
+
+def test_programmatic_single_executes_workflow(monkeypatch, tmp_path):
+    workflows = []
+    monkeypatch.setattr(
+        "experiment.persistence.write_workflow_run",
+        lambda workflow: workflows.append(workflow) or tmp_path,
+    )
+    monkeypatch.setattr("cli.runners.validate_paths", lambda _path: True)
+    monkeypatch.setattr(
+        "experiment.workflow_templates._launch_experiment",
+        lambda **_kwargs: {"experiment": {"status": "success"}, "resources": {}, "evaluation": {}},
+    )
+
+    result = run_single_experiment("ignored.config")
+
+    assert result.status == "success"
+    assert [task.task_id for task in workflows[0].tasks] == [
+        "ingest_dataset", "adapt_model", "evaluate_model",
+    ]
 
 
 def test_single_huggingface_declares_tpu_only_when_detected(monkeypatch, tmp_path):
