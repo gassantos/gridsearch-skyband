@@ -113,9 +113,31 @@ def _build_workflow_metadata(
 ) -> dict[str, Any]:
     """Declara o workflow já executado pelo runner legado, sem reexecutá-lo."""
     from experiment.workflow_templates import (
-        HuggingFaceWorkflowConfig,
         build_huggingface_workflow,
     )
+
+    workflow = build_huggingface_workflow(_build_huggingface_workflow_config(
+        experiment_idx,
+        params,
+        train_dataset=train_dataset,
+        dataset_overrides=dataset_overrides,
+        environment_details=environment_details,
+        tpu_cores=tpu_cores,
+    ))
+    return asdict(workflow)
+
+
+def _build_huggingface_workflow_config(
+    experiment_idx: int,
+    params: dict[str, Any],
+    *,
+    train_dataset: str,
+    dataset_overrides: dict[str, str] | None,
+    environment_details: dict[str, Any] | None,
+    tpu_cores: int,
+):
+    """Monta a configuração comum ao metadata e à execução da combinação."""
+    from experiment.workflow_templates import HuggingFaceWorkflowConfig
     from experiment.workflow import ResourceRequirements
 
     overrides = dict(dataset_overrides or {})
@@ -132,7 +154,7 @@ def _build_workflow_metadata(
         tpu_cores=tpu_cores,
         coupling_degree=0.9 if details.get("gpu") or tpu_cores else 0.0,
     )
-    workflow = build_huggingface_workflow(HuggingFaceWorkflowConfig(
+    return HuggingFaceWorkflowConfig(
         name=f"grid-experiment-{experiment_idx}",
         dataset_source=source,
         dataset_id=dataset_id,
@@ -142,8 +164,38 @@ def _build_workflow_metadata(
         model_version="pending",
         metrics_version="pending",
         resources=resources,
-    ))
-    return asdict(workflow)
+    )
+
+
+def _project_workflow_result(
+    workflow_run,
+    definition,
+    *,
+    workflow_run_dir: Path,
+    experiment_idx: int,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Projeta o resultado T0-T2-T5 no schema histórico do grid search."""
+    from experiment.aggregation import aggregate_workflow_run
+
+    adapt = next(task for task in workflow_run.tasks if task.task_id == "adapt_model")
+    adapt_metrics = adapt.attempts[-1].metrics if adapt.attempts else {}
+    legacy_result = adapt_metrics.get("legacy_result", {})
+    result = dict(legacy_result) if isinstance(legacy_result, dict) else {}
+    summary = aggregate_workflow_run(workflow_run, definition)
+    result["experiment"] = result.get("experiment", {
+        "id": workflow_run.experiment_run_id,
+        "status": workflow_run.status,
+    })
+    result["resources"] = adapt_metrics.get("resources", summary["resources"])
+    result["evaluation"] = summary["evaluation"]
+    result["grid_params"] = params
+    result["grid_experiment_idx"] = experiment_idx
+    result["workflow"] = asdict(definition)
+    result["workflow_run_dir"] = str(workflow_run_dir)
+    result["workflow_summary"] = summary
+    result["status"] = "success" if workflow_run.status == "success" else "failed"
+    return result
 
 
 # ============================================================================
@@ -185,11 +237,18 @@ def run_single_experiment(
     Returns:
         Dicionário com resultados do experimento
     """
-    # Import lazy para evitar inicialização de CUDA no processo principal
-    from experiment.xla_launcher import launch_experiment
+    # Imports lazy evitam inicialização de CUDA no processo principal.
+    from experiment.helpers import load_config
+    from experiment.persistence import write_workflow_run
+    from experiment.task_executor import SequentialWorkflowExecutor
+    from experiment.task_telemetry import TaskTelemetryCollector
+    from experiment.workflow_templates import (
+        build_huggingface_task_functions,
+        build_huggingface_workflow,
+    )
 
     logger.info(f"[{experiment_idx}] Iniciando experimento com parâmetros: {params}")
-    workflow_metadata = _build_workflow_metadata(
+    workflow_config = _build_huggingface_workflow_config(
         experiment_idx,
         params,
         train_dataset=train_dataset,
@@ -199,31 +258,39 @@ def run_single_experiment(
     )
 
     try:
-        # Executa experimento nas GPUs designadas
-        result_data = launch_experiment(
-            config_path=config_path,
-            gpu_list=gpu_list,
-            parallel_workers=parallel_workers,
-            dataset_overrides=dataset_overrides,
-            environment_overrides=environment_overrides,
-            environment_cost_per_hour_usd=cloud_cost_per_hour_usd,
-            tpu_cores=tpu_cores,
+        definition = build_huggingface_workflow(workflow_config)
+        monitoring = load_config(config_path).getboolean(
+            "monitoring", "enable_monitoring", fallback=False,
         )
-
-        if result_data is None:
-            raise RuntimeError(
-                "A execução não retornou resultado. Grid search com TPU multicore "
-                "ainda não suporta a coleta determinística de resultados."
-            )
-
-        # Adiciona parâmetros ao resultado
-        result_data["grid_params"] = params
-        result_data["grid_experiment_idx"] = experiment_idx
+        workflow_run = SequentialWorkflowExecutor(
+            build_huggingface_task_functions(
+                workflow_config,
+                config_path=config_path,
+                gpu_list=gpu_list,
+                parallel_workers=parallel_workers,
+                train_file=train_dataset,
+                environment_overrides=environment_overrides,
+                environment_cost_per_hour_usd=cloud_cost_per_hour_usd,
+                tpu_cores=tpu_cores,
+            ),
+            telemetry=TaskTelemetryCollector(
+                enable_emissions=monitoring,
+                environment_cost_per_hour_usd=cloud_cost_per_hour_usd,
+            ),
+        ).execute(definition)
+        workflow_run_dir = write_workflow_run(workflow_run)
+        result_data = _project_workflow_result(
+            workflow_run,
+            definition,
+            workflow_run_dir=workflow_run_dir,
+            experiment_idx=experiment_idx,
+            params=params,
+        )
         result_data["parallel_workers"] = parallel_workers
-        result_data["workflow"] = workflow_metadata
         if "environment" in params:
             result_data["selected_environment"] = params["environment"]
-        result_data["status"] = "success"
+        if workflow_run.status != "success":
+            raise RuntimeError("Workflow T0-T2-T5 falhou.")
 
         logger.info(f"[{experiment_idx}] Experimento concluído com sucesso")
         return result_data
@@ -238,7 +305,7 @@ def run_single_experiment(
             "status": "failed",
             "error": str(e),
             "traceback": traceback.format_exc(),
-            "workflow": workflow_metadata,
+            "workflow": asdict(build_huggingface_workflow(workflow_config)),
         }
 
 

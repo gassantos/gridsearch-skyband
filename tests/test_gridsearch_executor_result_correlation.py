@@ -1,7 +1,9 @@
 """Testa a correlação direta entre worker de grid e seu resultado."""
 
 import json
+from pathlib import Path
 
+from experiment import persistence
 import gridsearch.executor as executor_mod
 from gridsearch.executor import (
     _environment_capacity_registry,
@@ -12,7 +14,7 @@ from gridsearch.executor import (
 
 def test_run_single_experiment_uses_returned_result(monkeypatch):
     expected = {
-        "experiment": {"id": "worker-result"},
+        "experiment": {"id": "worker-result", "status": "success"},
         "resources": {"train_time_sec": "1.00"},
     }
 
@@ -22,6 +24,10 @@ def test_run_single_experiment_uses_returned_result(monkeypatch):
     monkeypatch.setattr(
         "experiment.xla_launcher.launch_experiment",
         fake_launch_experiment,
+    )
+    monkeypatch.setattr(
+        "experiment.workflow_templates._build_huggingface_dataset_probe",
+        lambda *_args, **_kwargs: lambda: {"records": 1, "fields": [], "source": "local_json"},
     )
 
     result = run_single_experiment(
@@ -36,9 +42,13 @@ def test_run_single_experiment_uses_returned_result(monkeypatch):
 
 def test_run_single_experiment_attaches_huggingface_workflow_metadata(monkeypatch):
     def fake_launch_experiment(**_kwargs):
-        return {"experiment": {"id": "worker-result"}, "resources": {}}
+        return {"experiment": {"id": "worker-result", "status": "success"}, "resources": {}}
 
     monkeypatch.setattr("experiment.xla_launcher.launch_experiment", fake_launch_experiment)
+    monkeypatch.setattr(
+        "experiment.workflow_templates._build_huggingface_dataset_probe",
+        lambda *_args, **_kwargs: lambda: {"records": 1, "fields": [], "source": "hub"},
+    )
 
     result = run_single_experiment(
         experiment_idx=7,
@@ -73,9 +83,13 @@ def test_run_single_experiment_attaches_huggingface_workflow_metadata(monkeypatc
 
 def test_run_single_experiment_declares_local_json_ingestion_metadata(monkeypatch):
     def fake_launch_experiment(**_kwargs):
-        return {"experiment": {"id": "worker-result"}, "resources": {}}
+        return {"experiment": {"id": "worker-result", "status": "success"}, "resources": {}}
 
     monkeypatch.setattr("experiment.xla_launcher.launch_experiment", fake_launch_experiment)
+    monkeypatch.setattr(
+        "experiment.workflow_templates._build_huggingface_dataset_probe",
+        lambda *_args, **_kwargs: lambda: {"records": 1, "fields": [], "source": "local_json"},
+    )
 
     result = run_single_experiment(
         experiment_idx=8,
@@ -96,6 +110,10 @@ def test_run_single_experiment_keeps_workflow_metadata_when_execution_fails(monk
         raise RuntimeError("launcher failure")
 
     monkeypatch.setattr("experiment.xla_launcher.launch_experiment", fake_launch_experiment)
+    monkeypatch.setattr(
+        "experiment.workflow_templates._build_huggingface_dataset_probe",
+        lambda *_args, **_kwargs: lambda: {"records": 1, "fields": [], "source": "hub"},
+    )
 
     result = run_single_experiment(
         experiment_idx=3,
@@ -109,14 +127,50 @@ def test_run_single_experiment_keeps_workflow_metadata_when_execution_fails(monk
     assert result["workflow"]["tasks"][0]["outputs"][0]["uri"] == "hf://datasets/nyu-mll/glue"
 
 
+def test_grid_combination_persists_workflow_run_and_projects_legacy_result(monkeypatch, tmp_path):
+    monkeypatch.setattr(persistence, "METRICS_DIR", tmp_path)
+    monkeypatch.setattr(
+        "experiment.workflow_templates._build_huggingface_dataset_probe",
+        lambda *_args, **_kwargs: lambda: {"records": 2, "fields": ["label"], "source": "hub"},
+    )
+    monkeypatch.setattr(
+        "experiment.xla_launcher.launch_experiment",
+        lambda **_kwargs: {
+            "experiment": {"id": "legacy-id", "status": "success"},
+            "resources": {"train_time_sec": 4.0, "total_gflops": 11.0},
+            "evaluation": {"f1_score": 0.9, "accuracy": 0.8},
+        },
+    )
+
+    result = run_single_experiment(
+        experiment_idx=4,
+        config_path="ignored.config",
+        params={"learning_rate": 2e-5},
+        dataset_overrides={"hf_dataset_source": "hub", "hf_dataset_id": "org/data"},
+    )
+
+    workflow_run_dir = Path(result["workflow_run_dir"])
+    manifest = json.loads((workflow_run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert [task["task_id"] for task in manifest["tasks"]] == [
+        "ingest_dataset", "adapt_model", "evaluate_model",
+    ]
+    assert result["resources"]["total_gflops"] == 11.0
+    assert result["evaluation"] == {"accuracy": 0.8, "f1_score": 0.9}
+    assert result["workflow_summary"]["status"] == "success"
+
+
 def test_grid_state_persists_workflow_and_resume_keeps_it(monkeypatch, tmp_path):
     calls = []
 
     def fake_launch_experiment(**_kwargs):
         calls.append("launch")
-        return {"experiment": {"id": "worker-result"}, "resources": {}}
+        return {"experiment": {"id": "worker-result", "status": "success"}, "resources": {}}
 
     monkeypatch.setattr("experiment.xla_launcher.launch_experiment", fake_launch_experiment)
+    monkeypatch.setattr(
+        "experiment.workflow_templates._build_huggingface_dataset_probe",
+        lambda *_args, **_kwargs: lambda: {"records": 1, "fields": [], "source": "hub"},
+    )
     monkeypatch.setattr(
         executor_mod,
         "create_config_for_combination",

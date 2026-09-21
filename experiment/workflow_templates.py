@@ -317,6 +317,10 @@ def build_huggingface_task_functions(
             "metrics": {
                 "resources": dict(resources),
                 "projected_evaluation": result.get("evaluation") or {},
+                "legacy_result": {
+                    key: value for key, value in result.items()
+                    if key not in {"resources", "evaluation"}
+                },
             },
             "artifacts": {"model": model_record, "checkpoint": model_record},
         }
