@@ -74,6 +74,16 @@ class HuggingFaceWorkflowConfig:
             raise ValueError("name deve ser informado.")
 
 
+@dataclass(frozen=True)
+class LauncherWorkflowConfig:
+    """Configuração do template T0 -> T2 -> T5 para um config local existente."""
+
+    name: str
+    config_path: str
+    train_dataset: str
+    resources: ResourceRequirements = field(default_factory=ResourceRequirements)
+
+
 DOMAIN_WORKFLOW_PROFILES: dict[str, DomainWorkflowProfile] = {
     "ml_classic": DomainWorkflowProfile("ml_classic", "scikit-learn", (
         WorkflowTaskTemplate("ingest_data", "Carregar dados", "ingest", activity=TaskActivity.INGESTION),
@@ -348,6 +358,95 @@ def build_huggingface_task_functions(
         "adapt_model": adapt_model,
         "evaluate_model": evaluate_model,
     }
+
+
+def build_launcher_workflow(config: LauncherWorkflowConfig) -> ExperimentDefinition:
+    """Cria um workflow canônico para o launcher configurado localmente."""
+    dataset = ArtifactDefinition(
+        artifact_id=f"dataset-{config.name}", kind=ArtifactKind.DATA,
+        version="input", uri=f"data/{config.train_dataset}.json",
+        metadata={"source": "config", "dataset_id": config.train_dataset},
+    )
+    model = ArtifactDefinition(
+        artifact_id=f"model-{config.name}", kind=ArtifactKind.MODEL, version="pending",
+    )
+    metrics = ArtifactDefinition(
+        artifact_id=f"metrics-{config.name}", kind=ArtifactKind.DATA, version="pending",
+    )
+    dataset_signature = _semantic_signature({
+        "config_path": config.config_path, "train_dataset": config.train_dataset,
+    })
+    return ExperimentDefinition(
+        name=config.name,
+        experiment_type="nlp",
+        tasks=(
+            TaskDefinition(
+                "ingest_dataset", "Carregar dataset", task_type="ingest",
+                config={"config_path": config.config_path, "train_dataset": config.train_dataset},
+                input_signatures={"dataset": dataset_signature}, outputs=(dataset,),
+                activity=TaskActivity.INGESTION, regime=ExecutionRegime.BUILD,
+            ),
+            TaskDefinition(
+                "adapt_model", "Adaptar modelo", config={"config_path": config.config_path},
+                input_signatures={"dataset": dataset_signature}, inputs=(dataset,), outputs=(model,),
+                activity=TaskActivity.ADAPTATION, regime=ExecutionRegime.BUILD,
+                resources=config.resources,
+            ),
+            TaskDefinition(
+                "evaluate_model", "Avaliar modelo", task_type="evaluate",
+                input_signatures={"dataset": dataset_signature}, inputs=(model,), outputs=(metrics,),
+                activity=TaskActivity.EVALUATION_MONITORING, regime=ExecutionRegime.BUILD,
+                resources=config.resources,
+            ),
+        ),
+    )
+
+
+def build_launcher_task_functions(
+    config: LauncherWorkflowConfig,
+    *,
+    gpu_list: list[int] | None = None,
+    environment_overrides: dict[str, str] | None = None,
+    tpu_cores: int = 1,
+    experiment_launcher: ExperimentLauncher | None = None,
+) -> Mapping[str, Callable[[], dict[str, Any]]]:
+    """Adapta o launcher legado ao mesmo contrato T0 -> T2 -> T5."""
+    result_holder: dict[str, dict[str, Any]] = {}
+
+    def ingest_dataset() -> dict[str, Any]:
+        workflow = build_launcher_workflow(config)
+        dataset = workflow.tasks[0].outputs[0]
+        return {"metrics": {"dataset": {**dataset.metadata, "uri": dataset.uri}},
+                "artifacts": {"dataset": _artifact_record(dataset)}}
+
+    def adapt_model() -> dict[str, Any]:
+        launcher = experiment_launcher or _launch_experiment
+        result = launcher(
+            config_path=config.config_path, gpu_list=gpu_list, parallel_workers=1,
+            train_file=config.train_dataset, dataset_overrides=None,
+            environment_overrides=environment_overrides, tpu_cores=tpu_cores,
+        )
+        if result is None or result.get("experiment", {}).get("status") != "success":
+            raise RuntimeError("Adaptação do launcher local falhou.")
+        result_holder["result"] = result
+        model = build_launcher_workflow(config).tasks[1].outputs[0]
+        return {
+            "metrics": {"resources": dict(result.get("resources", {})),
+                        "projected_evaluation": result.get("evaluation") or {},
+                        "legacy_result": {key: value for key, value in result.items()
+                                          if key not in {"resources", "evaluation"}}},
+            "artifacts": {"model": _artifact_record(model)},
+        }
+
+    def evaluate_model() -> dict[str, Any]:
+        result = result_holder.get("result")
+        if result is None:
+            raise RuntimeError("Avaliação requer uma adaptação concluída.")
+        metrics = build_launcher_workflow(config).tasks[2].outputs[0]
+        return {"metrics": {"evaluation": result.get("evaluation") or {}},
+                "artifacts": {"metrics": _artifact_record(metrics)}}
+
+    return {"ingest_dataset": ingest_dataset, "adapt_model": adapt_model, "evaluate_model": evaluate_model}
 
 
 def _build_huggingface_dataset_probe(

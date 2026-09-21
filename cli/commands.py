@@ -30,15 +30,17 @@ from experiment.task_telemetry import TaskTelemetryCollector
 from experiment.workflow import ResourceRequirements
 from experiment.workflow_templates import (
     HuggingFaceWorkflowConfig,
+    LauncherWorkflowConfig,
     build_huggingface_task_functions,
     build_huggingface_workflow,
+    build_launcher_task_functions,
+    build_launcher_workflow,
 )
 from utils.device import get_torch_device
 
 from .runners import (
     _build_dataset_overrides,
     run_grid_search_experiments,
-    run_single_experiment,
     run_skyband_analysis,
 )
 
@@ -88,14 +90,7 @@ class SingleCommand(Command):
         if dataset_overrides:
             self._execute_huggingface_workflow(args, dataset_overrides)
         else:
-            run_single_experiment(
-                args.config,
-                train_dataset=args.train_dataset,
-                dataset_overrides=None,
-                gpu_list=args.gpu,
-                tpu_cores=args.tpu_cores,
-                precision=args.precision,
-            )
+            self._execute_launcher_workflow(args)
         if not args.no_skyband:
             # require_state=False: modo single não gera estado de grid search;
             # a ausência do arquivo é aviso, não erro.
@@ -158,6 +153,45 @@ class SingleCommand(Command):
         run_dir = write_workflow_run(workflow)
         if workflow.status != "success":
             raise RuntimeError(f"Workflow Hugging Face falhou. Manifesto: {run_dir}")
+
+    @staticmethod
+    def _execute_launcher_workflow(args: argparse.Namespace) -> None:
+        """Executa o config local pelo template canônico, com um único worker."""
+        device_type = get_torch_device()["type"]
+        gpu_count = len(args.gpu) if args.gpu else (1 if device_type == "GPU" else 0)
+        tpu_cores = args.tpu_cores if device_type == "TPU" else 0
+        config = LauncherWorkflowConfig(
+            name=f"single-{args.train_dataset}",
+            config_path=args.config,
+            train_dataset=args.train_dataset,
+            resources=ResourceRequirements(
+                gpu_count=gpu_count,
+                tpu_cores=tpu_cores,
+                coupling_degree=0.9 if gpu_count or tpu_cores else 0.0,
+            ),
+        )
+        monitoring = load_config(args.config).getboolean(
+            "monitoring", "enable_monitoring", fallback=False,
+        )
+        resume_from = (
+            load_workflow_run(Path(args.workflow_resume_run))
+            if args.workflow_resume_run else None
+        )
+        cache = TaskCache(Path(args.workflow_cache_dir)) if args.workflow_cache_dir else None
+        workflow = SequentialWorkflowExecutor(
+            build_launcher_task_functions(
+                config,
+                gpu_list=args.gpu,
+                environment_overrides={"precision": args.precision} if args.precision else None,
+                tpu_cores=args.tpu_cores,
+            ),
+            cache=cache,
+            code_version=_workflow_code_version() if cache else None,
+            telemetry=TaskTelemetryCollector(enable_emissions=monitoring),
+        ).execute(build_launcher_workflow(config), resume_from=resume_from)
+        run_dir = write_workflow_run(workflow)
+        if workflow.status != "success":
+            raise RuntimeError(f"Workflow single falhou. Manifesto: {run_dir}")
 
 
 class GridCommand(Command):
