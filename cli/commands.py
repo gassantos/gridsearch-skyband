@@ -25,6 +25,13 @@ from experiment.helpers import load_config
 from experiment.persistence import write_workflow_run
 from experiment.task_executor import SequentialWorkflowExecutor
 from experiment.task_telemetry import TaskTelemetryCollector
+from experiment.workflow import ResourceRequirements
+from experiment.workflow_templates import (
+    HuggingFaceWorkflowConfig,
+    build_huggingface_task_functions,
+    build_huggingface_workflow,
+)
+from utils.device import get_torch_device
 
 from .runners import (
     _build_dataset_overrides,
@@ -60,14 +67,18 @@ class SingleCommand(Command):
     """Executa um único experimento, opcionalmente seguido de Skyband."""
 
     def execute(self, args: argparse.Namespace, sla_dict: dict) -> None:
-        run_single_experiment(
-            args.config,
-            train_dataset=args.train_dataset,
-            dataset_overrides=_build_dataset_overrides(args),
-            gpu_list=args.gpu,
-            tpu_cores=args.tpu_cores,
-            precision=args.precision,
-        )
+        dataset_overrides = _build_dataset_overrides(args)
+        if dataset_overrides:
+            self._execute_huggingface_workflow(args, dataset_overrides)
+        else:
+            run_single_experiment(
+                args.config,
+                train_dataset=args.train_dataset,
+                dataset_overrides=None,
+                gpu_list=args.gpu,
+                tpu_cores=args.tpu_cores,
+                precision=args.precision,
+            )
         if not args.no_skyband:
             # require_state=False: modo single não gera estado de grid search;
             # a ausência do arquivo é aviso, não erro.
@@ -80,6 +91,48 @@ class SingleCommand(Command):
                 state_file=args.skyband_state,
                 require_state=False,
             )
+
+    @staticmethod
+    def _execute_huggingface_workflow(
+        args: argparse.Namespace,
+        dataset_overrides: dict[str, str],
+    ) -> None:
+        if args.dataset_source == "hub" and not args.dataset_id:
+            raise ValueError("--dataset-id e obrigatorio quando --dataset-source hub.")
+
+        device_type = get_torch_device()["type"]
+        gpu_count = len(args.gpu) if args.gpu else (1 if device_type == "GPU" else 0)
+        tpu_cores = args.tpu_cores if device_type == "TPU" else 0
+        config = HuggingFaceWorkflowConfig(
+            name=f"huggingface-single-{args.train_dataset}",
+            dataset_source=args.dataset_source,
+            dataset_id=args.dataset_id or args.train_dataset,
+            dataset_config=args.dataset_config,
+            ingestion_parameters={"train_dataset": args.train_dataset, **dataset_overrides},
+            adaptation_parameters={"config_path": args.config},
+            resources=ResourceRequirements(
+                gpu_count=gpu_count,
+                tpu_cores=tpu_cores,
+                coupling_degree=0.9 if gpu_count or tpu_cores else 0.0,
+            ),
+        )
+        monitoring = load_config(args.config).getboolean(
+            "monitoring", "enable_monitoring", fallback=False,
+        )
+        workflow = SequentialWorkflowExecutor(
+            build_huggingface_task_functions(
+                config,
+                config_path=args.config,
+                gpu_list=args.gpu,
+                train_file=args.train_dataset,
+                environment_overrides={"precision": args.precision} if args.precision else None,
+                tpu_cores=args.tpu_cores,
+            ),
+            telemetry=TaskTelemetryCollector(enable_emissions=monitoring),
+        ).execute(build_huggingface_workflow(config))
+        run_dir = write_workflow_run(workflow)
+        if workflow.status != "success":
+            raise RuntimeError(f"Workflow Hugging Face falhou. Manifesto: {run_dir}")
 
 
 class GridCommand(Command):
