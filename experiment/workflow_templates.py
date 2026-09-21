@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,6 +16,9 @@ from .workflow import (
     TaskActivity,
     TaskDefinition,
 )
+
+DatasetProbe = Callable[[], dict[str, Any]]
+ExperimentLauncher = Callable[..., dict[str, Any] | None]
 
 
 @dataclass(frozen=True)
@@ -221,3 +224,137 @@ def build_huggingface_workflow(config: HuggingFaceWorkflowConfig) -> ExperimentD
             ),
         ),
     )
+
+
+def build_huggingface_task_functions(
+    workflow_config: HuggingFaceWorkflowConfig,
+    *,
+    config_path: str,
+    gpu_list: list[int] | None = None,
+    parallel_workers: int = 1,
+    train_file: str | None = None,
+    environment_overrides: dict[str, str] | None = None,
+    environment_cost_per_hour_usd: float | None = None,
+    tpu_cores: int = 1,
+    dataset_probe: DatasetProbe | None = None,
+    experiment_launcher: ExperimentLauncher | None = None,
+) -> Mapping[str, Callable[[], dict[str, Any]]]:
+    """Cria os adaptadores executáveis do workflow Hugging Face T0 -> T2 -> T5.
+
+    Enquanto o runner legado concentra treino e avaliação em uma única chamada,
+    T2 o encapsula e T5 projeta a avaliação retornada como saída explícita da
+    tarefa. A separação física da avaliação será feita quando o runner for
+    decomposto em tarefas nativas.
+    """
+    result_holder: dict[str, dict[str, Any]] = {}
+    probe = dataset_probe or _build_huggingface_dataset_probe(
+        workflow_config, config_path=config_path, train_file=train_file,
+    )
+
+    def ingest_dataset() -> dict[str, Any]:
+        metadata = probe()
+        workflow = build_huggingface_workflow(workflow_config)
+        dataset = workflow.tasks[0].outputs[0]
+        return {
+            "metrics": {"dataset": metadata},
+            "artifacts": {"dataset": _artifact_record(dataset)},
+        }
+
+    def adapt_model() -> dict[str, Any]:
+        launcher = experiment_launcher or _launch_experiment
+        result = launcher(
+            config_path=config_path,
+            gpu_list=gpu_list,
+            parallel_workers=parallel_workers,
+            train_file=train_file,
+            dataset_overrides=_dataset_overrides(workflow_config),
+            environment_overrides=environment_overrides,
+            environment_cost_per_hour_usd=environment_cost_per_hour_usd,
+            tpu_cores=tpu_cores,
+        )
+        if result is None:
+            raise RuntimeError("O launcher não retornou resultado para a adaptação Hugging Face.")
+        if result.get("experiment", {}).get("status") != "success":
+            raise RuntimeError(result.get("logs", {}).get("stderr_tail") or "Adaptação Hugging Face falhou.")
+        result_holder["result"] = result
+        workflow = build_huggingface_workflow(workflow_config)
+        model = workflow.tasks[1].outputs[0]
+        resources = result.get("resources", {})
+        return {
+            "metrics": {"resources": dict(resources)},
+            "artifacts": {"model": _artifact_record(model)},
+        }
+
+    def evaluate_model() -> dict[str, Any]:
+        result = result_holder.get("result")
+        if result is None:
+            raise RuntimeError("Avaliação Hugging Face requer uma adaptação concluída.")
+        workflow = build_huggingface_workflow(workflow_config)
+        metrics = workflow.tasks[2].outputs[0]
+        return {
+            "metrics": {"evaluation": result.get("evaluation") or {}},
+            "artifacts": {"metrics": _artifact_record(metrics)},
+        }
+
+    return {
+        "ingest_dataset": ingest_dataset,
+        "adapt_model": adapt_model,
+        "evaluate_model": evaluate_model,
+    }
+
+
+def _build_huggingface_dataset_probe(
+    workflow_config: HuggingFaceWorkflowConfig,
+    *,
+    config_path: str,
+    train_file: str | None,
+) -> DatasetProbe:
+    def probe() -> dict[str, Any]:
+        from dataset.nlp.HuggingFace import HuggingFaceDataset
+
+        from .helpers import load_config
+
+        config = load_config(config_path)
+        if not config.has_section("data"):
+            config.add_section("data")
+        if train_file is not None:
+            config.set("data", "train_file_list", f"{train_file}.json")
+        for key, value in _dataset_overrides(workflow_config).items():
+            config.set("data", key, value)
+        dataset = HuggingFaceDataset(config, "train")
+        size = len(dataset)
+        if size < 1:
+            raise ValueError("O dataset Hugging Face não possui exemplos de treino.")
+        sample = dataset[0]
+        return {"records": size, "fields": sorted(sample), "source": workflow_config.dataset_source}
+
+    return probe
+
+
+def _dataset_overrides(config: HuggingFaceWorkflowConfig) -> dict[str, str]:
+    overrides = {
+        "hf_dataset_source": config.dataset_source,
+        "hf_dataset_id": config.dataset_id,
+        "train_dataset_type": "HuggingFace",
+        "valid_dataset_type": "HuggingFace",
+        "test_dataset_type": "HuggingFace",
+    }
+    if config.dataset_config is not None:
+        overrides["hf_dataset_config"] = config.dataset_config
+    return overrides
+
+
+def _artifact_record(artifact: ArtifactDefinition) -> dict[str, Any]:
+    return {
+        "artifact_id": artifact.artifact_id,
+        "kind": artifact.kind.value,
+        "version": artifact.version,
+        "uri": artifact.uri,
+        "metadata": dict(artifact.metadata),
+    }
+
+
+def _launch_experiment(**kwargs: Any) -> dict[str, Any] | None:
+    from .xla_launcher import launch_experiment
+
+    return launch_experiment(**kwargs)

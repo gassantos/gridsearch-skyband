@@ -85,5 +85,6 @@ from .workflow_templates import (  # noqa: F401
     HuggingFaceWorkflowConfig,
     WorkflowTaskTemplate,
     build_domain_workflow,
+    build_huggingface_task_functions,
     build_huggingface_workflow,
 )
