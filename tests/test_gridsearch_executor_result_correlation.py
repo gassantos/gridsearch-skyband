@@ -5,6 +5,7 @@ from pathlib import Path
 
 from experiment import persistence
 import gridsearch.executor as executor_mod
+from gridsearch.skyband import skyband_query
 from gridsearch.executor import (
     _environment_capacity_registry,
     run_grid_search,
@@ -157,6 +158,12 @@ def test_grid_combination_persists_workflow_run_and_projects_legacy_result(monke
     assert result["resources"]["total_gflops"] == 11.0
     assert result["evaluation"] == {"accuracy": 0.8, "f1_score": 0.9}
     assert result["workflow_summary"]["status"] == "success"
+
+    frontier = skyband_query(
+        [result], k=1, metrics=["train_time_sec", "total_gflops", "f1_score"],
+        minimize=[True, False, False], include_quality_metrics=True,
+    )
+    assert [point["grid_experiment_idx"] for point in frontier] == [4]
 
 
 def test_grid_state_persists_workflow_and_resume_keeps_it(monkeypatch, tmp_path):

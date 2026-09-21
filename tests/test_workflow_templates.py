@@ -190,6 +190,39 @@ def test_huggingface_task_adapters_skip_t5_after_failed_t2():
     assert result.tasks[2].status.value == "skipped"
 
 
+def test_huggingface_task_adapters_skip_t2_and_t5_after_failed_t0():
+    workflow_config = HuggingFaceWorkflowConfig(name="hf-ingest-failure", dataset_source="hub", dataset_id="org/data")
+    workflow = build_huggingface_workflow(workflow_config)
+    result = SequentialWorkflowExecutor(build_huggingface_task_functions(
+        workflow_config,
+        config_path="ignored.config",
+        dataset_probe=lambda: (_ for _ in ()).throw(ValueError("dataset indisponível")),
+        experiment_launcher=lambda **_kwargs: pytest.fail("T2 não deve executar"),
+    )).execute(workflow)
+
+    assert result.status == "failed"
+    assert [task.status.value for task in result.tasks] == ["failed", "skipped", "skipped"]
+
+
+def test_huggingface_task_adapters_preserve_t0_t2_when_t5_fails():
+    workflow_config = HuggingFaceWorkflowConfig(name="hf-eval-failure", dataset_source="hub", dataset_id="org/data")
+    workflow = build_huggingface_workflow(workflow_config)
+    task_functions = dict(build_huggingface_task_functions(
+        workflow_config,
+        config_path="ignored.config",
+        dataset_probe=lambda: {"records": 1, "fields": [], "source": "hub"},
+        experiment_launcher=lambda **_kwargs: {
+            "experiment": {"status": "success"}, "resources": {}, "evaluation": {},
+        },
+    ))
+    task_functions["evaluate_model"] = lambda: (_ for _ in ()).throw(RuntimeError("evaluation failed"))
+
+    result = SequentialWorkflowExecutor(task_functions).execute(workflow)
+
+    assert result.status == "failed"
+    assert [task.status.value for task in result.tasks] == ["succeeded", "succeeded", "failed"]
+
+
 def test_huggingface_t2_records_checkpoint_location_from_training_config(tmp_path):
     config_path = tmp_path / "train.config"
     config_path.write_text(
