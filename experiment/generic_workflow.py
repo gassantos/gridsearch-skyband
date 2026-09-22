@@ -23,6 +23,12 @@ from .workflow import (
 SUPPORTED_EXPERIMENT_TYPES = frozenset({"ml_classic", "deep_learning", "nlp", "llm"})
 CommandRunner = Callable[[list[str]], None]
 
+_REQUIRED_ACTIVITIES = (
+    TaskActivity.INGESTION,
+    TaskActivity.ADAPTATION,
+    TaskActivity.EVALUATION_MONITORING,
+)
+
 
 @dataclass(frozen=True)
 class GenericTaskSpec:
@@ -92,8 +98,8 @@ def load_generic_workflow_spec(path: Path) -> GenericWorkflowSpec:
 
 
 def build_generic_workflow(spec: GenericWorkflowSpec) -> ExperimentDefinition:
-    """Converte a especificacao generica em definicao declarativa de DAG."""
-    return ExperimentDefinition(
+    """Converte a especificacao generica em uma DAG canônica do domínio."""
+    definition = ExperimentDefinition(
         name=spec.name,
         experiment_type=spec.experiment_type,
         tasks=tuple(
@@ -117,6 +123,29 @@ def build_generic_workflow(spec: GenericWorkflowSpec) -> ExperimentDefinition:
             for task in spec.tasks
         ),
     )
+    _validate_domain_lifecycle(definition)
+    return definition
+
+
+def _validate_domain_lifecycle(definition: ExperimentDefinition) -> None:
+    """Garante o ciclo mínimo T0 -> T2 -> T5 de qualquer workflow genérico."""
+    activities = [task.activity for task in definition.tasks]
+    if TaskActivity.CUSTOM in activities:
+        raise ValueError(
+            "Toda tarefa de workflow generico deve declarar uma atividade canônica do template."
+        )
+    positions: list[int] = []
+    for activity in _REQUIRED_ACTIVITIES:
+        try:
+            positions.append(activities.index(activity))
+        except ValueError as exc:
+            raise ValueError(
+                f"Workflow {definition.experiment_type} deve conter a atividade '{activity.value}'."
+            ) from exc
+    if positions != sorted(positions):
+        raise ValueError(
+            "O template exige a ordem ingestão -> adaptação -> avaliação/monitoramento."
+        )
 
 
 def build_generic_task_functions(

@@ -60,43 +60,40 @@ def run_single_experiment(
     tpu_cores: int = 1,
     precision: str | None = None,
 ):
-    """
-    Executa um único experimento.
-
-    Args:
-        config_path: Caminho do arquivo de configuração.
-        train_dataset: Nome do arquivo de treino sem extensão.
-        dataset_overrides: Chaves da seção ``[data]`` a sobrescrever no config.
-        gpu_list: IDs das GPUs a utilizar (None = detecção automática).
-        precision: Precisão que sobrescreve ``[environment] precision``.
-    """
-    # Import lazy para evitar inicialização de CUDA no processo principal
-    from experiment.xla_launcher import launch_experiment
-
-    logger.info("=" * 70)
-    logger.info("MODO: Experimento Único")
-    logger.info(f"Configuração: {config_path}")
-    if dataset_overrides:
-        logger.info(f"Dataset HF overrides: {dataset_overrides}")
-    else:
-        logger.info(f"Dataset de treino: {train_dataset}.json")
-    if gpu_list is not None:
-        logger.info(f"GPUs: {gpu_list}")
-    logger.info("=" * 70)
+    """Executa uma combinação única pelo template workflow T0 -> T2 -> T5."""
+    from experiment.helpers import load_config
+    from experiment.persistence import write_workflow_run
+    from experiment.task_executor import SequentialWorkflowExecutor
+    from experiment.task_telemetry import TaskTelemetryCollector
+    from experiment.workflow import ResourceRequirements
+    from experiment.workflow_templates import (
+        LauncherWorkflowConfig,
+        build_launcher_task_functions,
+        build_launcher_workflow,
+    )
 
     if not validate_paths(config_path):
-        sys.exit(1)
-
-    launch_experiment(
+        raise FileNotFoundError(f"Arquivo de configuração não encontrado: {config_path}")
+    config = LauncherWorkflowConfig(
+        name=f"single-{train_dataset}",
         config_path=config_path,
-        gpu_list=gpu_list,
-        parallel_workers=1,
-        train_file=train_dataset if train_dataset != DEFAULT_TRAIN_DATASET else None,
-        dataset_overrides=dataset_overrides,
-        environment_overrides={"precision": precision} if precision else None,
-        tpu_cores=tpu_cores,
+        train_dataset=train_dataset,
+        resources=ResourceRequirements(gpu_count=len(gpu_list or []), coupling_degree=0.9 if gpu_list else 0.0),
     )
-    logger.info("Experimento concluído com sucesso!")
+    monitoring = load_config(config_path).getboolean("monitoring", "enable_monitoring", fallback=False)
+    workflow = SequentialWorkflowExecutor(
+        build_launcher_task_functions(
+            config,
+            gpu_list=gpu_list,
+            environment_overrides={"precision": precision} if precision else None,
+            tpu_cores=tpu_cores,
+        ),
+        telemetry=TaskTelemetryCollector(enable_emissions=monitoring),
+    ).execute(build_launcher_workflow(config))
+    run_dir = write_workflow_run(workflow)
+    if workflow.status != "success":
+        raise RuntimeError(f"Workflow single falhou. Manifesto: {run_dir}")
+    return workflow
 
 
 def _build_dataset_overrides(args) -> dict[str, str] | None:

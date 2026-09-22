@@ -10,6 +10,7 @@
       "task_id": "prepare_dataset",
       "name": "Preparar dados de instrucoes",
       "task_type": "prepare",
+      "activity": "ingestion",
       "command": ["python", "scripts/prepare_instruction_data.py"],
       "config": {"dataset": "data/instructions.jsonl", "max_seq_length": 2048},
       "input_signatures": {"dataset": "replace-with-dataset-hash"},
@@ -19,6 +20,7 @@
       "task_id": "fine_tune_llm",
       "name": "Ajustar LLM",
       "task_type": "train",
+      "activity": "adaptation",
       "depends_on": ["prepare_dataset"],
       "command": ["python", "scripts/train_llm.py"],
       "config": {"model": "meta-llama/Llama-3.1-8B", "method": "lora", "epochs": 2},
@@ -28,6 +30,7 @@
       "task_id": "evaluate_llm",
       "name": "Avaliar LLM",
       "task_type": "evaluate",
+      "activity": "evaluation_monitoring",
       "depends_on": ["fine_tune_llm"],
       "command": ["python", "scripts/evaluate_llm.py"],
       "artifacts": {"report": "output/llm/evaluation.json"}

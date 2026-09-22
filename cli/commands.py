@@ -8,6 +8,7 @@ Autor: Gustavo Alexandre
 """
 
 import argparse
+import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -22,16 +23,41 @@ from experiment.generic_workflow import (
     load_generic_workflow_spec,
 )
 from experiment.helpers import load_config
-from experiment.persistence import write_workflow_run
+from experiment.persistence import load_workflow_run, write_workflow_run
+from experiment.task_cache import TaskCache
 from experiment.task_executor import SequentialWorkflowExecutor
 from experiment.task_telemetry import TaskTelemetryCollector
+from experiment.workflow import ResourceRequirements
+from experiment.workflow_templates import (
+    HuggingFaceWorkflowConfig,
+    LauncherWorkflowConfig,
+    build_huggingface_task_functions,
+    build_huggingface_workflow,
+    build_launcher_task_functions,
+    build_launcher_workflow,
+)
+from utils.device import get_torch_device
 
 from .runners import (
     _build_dataset_overrides,
     run_grid_search_experiments,
-    run_single_experiment,
     run_skyband_analysis,
 )
+
+
+def _workflow_code_version() -> str:
+    """Obtém a revisão Git usada para invalidar cache após mudanças de código."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "unversioned"
+    return result.stdout.strip() or "unversioned"
 
 
 class Command(ABC):
@@ -60,14 +86,11 @@ class SingleCommand(Command):
     """Executa um único experimento, opcionalmente seguido de Skyband."""
 
     def execute(self, args: argparse.Namespace, sla_dict: dict) -> None:
-        run_single_experiment(
-            args.config,
-            train_dataset=args.train_dataset,
-            dataset_overrides=_build_dataset_overrides(args),
-            gpu_list=args.gpu,
-            tpu_cores=args.tpu_cores,
-            precision=args.precision,
-        )
+        dataset_overrides = _build_dataset_overrides(args)
+        if dataset_overrides:
+            self._execute_huggingface_workflow(args, dataset_overrides)
+        else:
+            self._execute_launcher_workflow(args)
         if not args.no_skyband:
             # require_state=False: modo single não gera estado de grid search;
             # a ausência do arquivo é aviso, não erro.
@@ -80,6 +103,95 @@ class SingleCommand(Command):
                 state_file=args.skyband_state,
                 require_state=False,
             )
+
+    @staticmethod
+    def _execute_huggingface_workflow(
+        args: argparse.Namespace,
+        dataset_overrides: dict[str, str],
+    ) -> None:
+        if args.dataset_source == "hub" and not args.dataset_id:
+            raise ValueError("--dataset-id e obrigatorio quando --dataset-source hub.")
+
+        device_type = get_torch_device()["type"]
+        gpu_count = len(args.gpu) if args.gpu else (1 if device_type == "GPU" else 0)
+        tpu_cores = args.tpu_cores if device_type == "TPU" else 0
+        config = HuggingFaceWorkflowConfig(
+            name=f"huggingface-single-{args.train_dataset}",
+            dataset_source=args.dataset_source,
+            dataset_id=args.dataset_id or args.train_dataset,
+            dataset_config=args.dataset_config,
+            ingestion_parameters={"train_dataset": args.train_dataset, **dataset_overrides},
+            adaptation_parameters={"config_path": args.config},
+            resources=ResourceRequirements(
+                gpu_count=gpu_count,
+                tpu_cores=tpu_cores,
+                coupling_degree=0.9 if gpu_count or tpu_cores else 0.0,
+            ),
+        )
+        monitoring = load_config(args.config).getboolean(
+            "monitoring", "enable_monitoring", fallback=False,
+        )
+        definition = build_huggingface_workflow(config)
+        resume_from = (
+            load_workflow_run(Path(args.workflow_resume_run))
+            if args.workflow_resume_run else None
+        )
+        cache = TaskCache(Path(args.workflow_cache_dir)) if args.workflow_cache_dir else None
+        workflow = SequentialWorkflowExecutor(
+            build_huggingface_task_functions(
+                config,
+                config_path=args.config,
+                gpu_list=args.gpu,
+                train_file=args.train_dataset,
+                environment_overrides={"precision": args.precision} if args.precision else None,
+                tpu_cores=args.tpu_cores,
+            ),
+            cache=cache,
+            code_version=_workflow_code_version() if cache else None,
+            telemetry=TaskTelemetryCollector(enable_emissions=monitoring),
+        ).execute(definition, resume_from=resume_from)
+        run_dir = write_workflow_run(workflow)
+        if workflow.status != "success":
+            raise RuntimeError(f"Workflow Hugging Face falhou. Manifesto: {run_dir}")
+
+    @staticmethod
+    def _execute_launcher_workflow(args: argparse.Namespace) -> None:
+        """Executa o config local pelo template canônico, com um único worker."""
+        device_type = get_torch_device()["type"]
+        gpu_count = len(args.gpu) if args.gpu else (1 if device_type == "GPU" else 0)
+        tpu_cores = args.tpu_cores if device_type == "TPU" else 0
+        config = LauncherWorkflowConfig(
+            name=f"single-{args.train_dataset}",
+            config_path=args.config,
+            train_dataset=args.train_dataset,
+            resources=ResourceRequirements(
+                gpu_count=gpu_count,
+                tpu_cores=tpu_cores,
+                coupling_degree=0.9 if gpu_count or tpu_cores else 0.0,
+            ),
+        )
+        monitoring = load_config(args.config).getboolean(
+            "monitoring", "enable_monitoring", fallback=False,
+        )
+        resume_from = (
+            load_workflow_run(Path(args.workflow_resume_run))
+            if args.workflow_resume_run else None
+        )
+        cache = TaskCache(Path(args.workflow_cache_dir)) if args.workflow_cache_dir else None
+        workflow = SequentialWorkflowExecutor(
+            build_launcher_task_functions(
+                config,
+                gpu_list=args.gpu,
+                environment_overrides={"precision": args.precision} if args.precision else None,
+                tpu_cores=args.tpu_cores,
+            ),
+            cache=cache,
+            code_version=_workflow_code_version() if cache else None,
+            telemetry=TaskTelemetryCollector(enable_emissions=monitoring),
+        ).execute(build_launcher_workflow(config), resume_from=resume_from)
+        run_dir = write_workflow_run(workflow)
+        if workflow.status != "success":
+            raise RuntimeError(f"Workflow single falhou. Manifesto: {run_dir}")
 
 
 class GridCommand(Command):

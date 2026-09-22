@@ -86,6 +86,11 @@ Exemplos de uso:
   python -m main --mode single \\
       --dataset-source local_json
 
+  # Retomar um workflow Hugging Face persistido e usar cache semântico
+  python -m main --mode single --dataset-source hub --dataset-id nyu-mll/glue \
+      --workflow-resume-run output/experiments/workflow_runs/<run-id> \
+      --workflow-cache-dir output/experiments/workflow_cache
+
   # Grid search com dataset do Hub + SLA
   python -m main --mode grid --sla-profile dev \\
       --dataset-source hub --dataset-id nyu-mll/glue --dataset-config mrpc
@@ -141,6 +146,22 @@ Configurações padrão:
         default=None,
         metavar="ARQUIVO",
         help="Especificacao JSON obrigatoria para --workflow generic.",
+    )
+
+    parser.add_argument(
+        "--workflow-resume-run",
+        type=str,
+        default=None,
+        metavar="DIRETORIO",
+        help="Retoma um manifesto persistido no workflow Hugging Face do modo single.",
+    )
+
+    parser.add_argument(
+        "--workflow-cache-dir",
+        type=str,
+        default=None,
+        metavar="DIRETORIO",
+        help="Diretório opcional para cache semântico no workflow Hugging Face do modo single.",
     )
 
     parser.add_argument(

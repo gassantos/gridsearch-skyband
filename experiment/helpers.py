@@ -68,7 +68,7 @@ def compute_cost_usd(
 
 def now_iso() -> str:
     """Retorna o instante atual em formato ISO 8601 com timezone UTC."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now().astimezone().isoformat()
 
 
 def load_config(path: str) -> configparser.ConfigParser:

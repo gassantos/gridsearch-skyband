@@ -73,7 +73,10 @@ class SequentialWorkflowExecutor:
                 continue
 
             previous = previous_tasks.get(task.task_id)
+            if previous and not self._is_resume_compatible(task, previous):
+                previous = None
             if previous and previous.status in {TaskStatus.SUCCEEDED, TaskStatus.CACHED}:
+                self._restore_task_state(task.task_id, previous)
                 task_runs.append(previous)
                 statuses[task.task_id] = previous.status
                 continue
@@ -99,6 +102,7 @@ class SequentialWorkflowExecutor:
             cached = cache.get(signature) if cache and signature else None
             if cached:
                 task_run = self._cached_task_run(task, cached)
+                self._restore_task_state(task.task_id, task_run)
             else:
                 task_fn = self._task_functions.get(task.task_id)
                 if task_fn is None:
@@ -120,6 +124,21 @@ class SequentialWorkflowExecutor:
             status="failed" if required_failed else "success",
             tasks=task_runs,
         )
+
+    @staticmethod
+    def _is_resume_compatible(task, previous: TaskRun) -> bool:
+        return (
+            task.task_type == previous.task_type
+            and task.config == previous.config
+            and task.input_signatures == previous.input_signatures
+        )
+
+    def _restore_task_state(self, task_id: str, task_run: TaskRun) -> None:
+        """Permite que adaptadores reidratem estado ao reutilizar T2 do cache."""
+        task_fn = self._task_functions.get(task_id)
+        restore = getattr(task_fn, "restore_cached_result", None)
+        if restore and task_run.attempts:
+            restore(task_run.attempts[-1].metrics)
 
     @staticmethod
     def _cached_task_run(task, cached: dict[str, Any]) -> TaskRun:
@@ -307,11 +326,16 @@ class ParallelWorkflowExecutor(SequentialWorkflowExecutor):
                 )
             else:
                 previous = previous_tasks.get(task.task_id)
-                if (
-                    previous and previous.status in {TaskStatus.SUCCEEDED, TaskStatus.CACHED}
-                    or previous and previous.status is TaskStatus.FAILED and not self._can_resume(task, previous)
+                compatible_previous = (
+                    previous if previous and self._is_resume_compatible(task, previous) else None
+                )
+                if compatible_previous and (
+                    compatible_previous.status in {TaskStatus.SUCCEEDED, TaskStatus.CACHED}
+                    or compatible_previous.status is TaskStatus.FAILED
+                    and not self._can_resume(task, compatible_previous)
                 ):
-                    task_runs[task.task_id] = previous
+                    self._restore_task_state(task.task_id, compatible_previous)
+                    task_runs[task.task_id] = compatible_previous
                 else:
                     continue
             statuses[task.task_id] = task_runs[task.task_id].status
@@ -329,6 +353,8 @@ class ParallelWorkflowExecutor(SequentialWorkflowExecutor):
         )
 
     def _execute_ready_task(self, task, previous: TaskRun | None) -> TaskRun:
+        if previous and not self._is_resume_compatible(task, previous):
+            previous = None
         cache = self._cache
         signature = (
             cache.signature(task, self._code_version)
@@ -337,7 +363,9 @@ class ParallelWorkflowExecutor(SequentialWorkflowExecutor):
         )
         cached = cache.get(signature) if cache and signature else None
         if cached:
-            return self._cached_task_run(task, cached)
+            task_run = self._cached_task_run(task, cached)
+            self._restore_task_state(task.task_id, task_run)
+            return task_run
 
         task_fn = self._task_functions.get(task.task_id)
         if task_fn is None:

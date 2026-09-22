@@ -15,6 +15,7 @@ import os
 import sys
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,23 @@ def _get_device_type() -> str:
     if _device_type_cache is None:
         _device_type_cache = get_torch_device()['type']
     return str(_device_type_cache)
+
+
+def _environment_capacity_registry(grid_config: dict[str, Any]) -> dict[str, int]:
+    """Extrai ``parallel_workers`` por ambiente de ``environments.details`` (BL-W2).
+
+    Usado para limitar a alocação de GPU/worker à capacidade declarada de cada
+    ambiente computacional (ex.: Colab T4 = 1 GPU, local RTX 3090 = 2), em vez
+    de assumir sempre a capacidade global do pool de GPUs físicas detectadas.
+    """
+    details = grid_config.get("environments", {}).get("details", {})
+    if not isinstance(details, dict):
+        return {}
+    return {
+        name: int(info["parallel_workers"])
+        for name, info in details.items()
+        if isinstance(info, dict) and info.get("parallel_workers") is not None
+    }
 
 
 # ============================================================================
@@ -79,6 +97,107 @@ def _grid_summary_file(output_dir: Path | None = None):
     return base / f"grid_search_summary_{_get_device_type()}_{_TDATE}.txt"
 
 
+def _resource_catalog_file(output_dir: Path | None = None):
+    base = _resolve_output_dir(output_dir)
+    return base / f"resource_catalog_{_get_device_type()}_{_TDATE}.json"
+
+
+def _build_workflow_metadata(
+    experiment_idx: int,
+    params: dict[str, Any],
+    *,
+    train_dataset: str,
+    dataset_overrides: dict[str, str] | None,
+    environment_details: dict[str, Any] | None,
+    tpu_cores: int,
+) -> dict[str, Any]:
+    """Declara o workflow já executado pelo runner legado, sem reexecutá-lo."""
+    from experiment.workflow_templates import (
+        build_huggingface_workflow,
+    )
+
+    workflow = build_huggingface_workflow(_build_huggingface_workflow_config(
+        experiment_idx,
+        params,
+        train_dataset=train_dataset,
+        dataset_overrides=dataset_overrides,
+        environment_details=environment_details,
+        tpu_cores=tpu_cores,
+    ))
+    return asdict(workflow)
+
+
+def _build_huggingface_workflow_config(
+    experiment_idx: int,
+    params: dict[str, Any],
+    *,
+    train_dataset: str,
+    dataset_overrides: dict[str, str] | None,
+    environment_details: dict[str, Any] | None,
+    tpu_cores: int,
+):
+    """Monta a configuração comum ao metadata e à execução da combinação."""
+    from experiment.workflow_templates import HuggingFaceWorkflowConfig
+    from experiment.workflow import ResourceRequirements
+
+    overrides = dict(dataset_overrides or {})
+    details = dict(environment_details or {})
+    source = overrides.get("hf_dataset_source", "local_json")
+    dataset_id = overrides.get("hf_dataset_id", train_dataset)
+    cores = details.get("cores_by_processor", {})
+    cpu_cores = cores.get("CPU") if isinstance(cores, dict) else None
+    vram_gb = details.get("vram_gb")
+    resources = ResourceRequirements(
+        cpu_cores=float(cpu_cores) if cpu_cores is not None else None,
+        memory_mb=float(vram_gb) * 1024 if vram_gb is not None else None,
+        gpu_count=1 if details.get("gpu") else 0,
+        tpu_cores=tpu_cores,
+        coupling_degree=0.9 if details.get("gpu") or tpu_cores else 0.0,
+    )
+    return HuggingFaceWorkflowConfig(
+        name=f"grid-experiment-{experiment_idx}",
+        dataset_source=source,
+        dataset_id=dataset_id,
+        dataset_config=overrides.get("hf_dataset_config"),
+        ingestion_parameters={"train_dataset": train_dataset, **overrides},
+        adaptation_parameters={"train_dataset": train_dataset, **overrides, **params},
+        model_version="pending",
+        metrics_version="pending",
+        resources=resources,
+    )
+
+
+def _project_workflow_result(
+    workflow_run,
+    definition,
+    *,
+    workflow_run_dir: Path,
+    experiment_idx: int,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Projeta o resultado T0-T2-T5 no schema histórico do grid search."""
+    from experiment.aggregation import aggregate_workflow_run
+
+    adapt = next(task for task in workflow_run.tasks if task.task_id == "adapt_model")
+    adapt_metrics = adapt.attempts[-1].metrics if adapt.attempts else {}
+    legacy_result = adapt_metrics.get("legacy_result", {})
+    result = dict(legacy_result) if isinstance(legacy_result, dict) else {}
+    summary = aggregate_workflow_run(workflow_run, definition)
+    result["experiment"] = result.get("experiment", {
+        "id": workflow_run.experiment_run_id,
+        "status": workflow_run.status,
+    })
+    result["resources"] = adapt_metrics.get("resources", summary["resources"])
+    result["evaluation"] = summary["evaluation"]
+    result["grid_params"] = params
+    result["grid_experiment_idx"] = experiment_idx
+    result["workflow"] = asdict(definition)
+    result["workflow_run_dir"] = str(workflow_run_dir)
+    result["workflow_summary"] = summary
+    result["status"] = "success" if workflow_run.status == "success" else "failed"
+    return result
+
+
 # ============================================================================
 # EXECUÇÃO DE EXPERIMENTO ÚNICO
 # ============================================================================
@@ -93,6 +212,8 @@ def run_single_experiment(
     cloud_cost_per_hour_usd: float | None = None,
     tpu_cores: int = 1,
     environment_overrides: dict[str, str] | None = None,
+    environment_details: dict[str, Any] | None = None,
+    train_dataset: str = "train_task2",
 ) -> dict[str, Any]:
     """
     Executa um único experimento e retorna os resultados.
@@ -116,36 +237,60 @@ def run_single_experiment(
     Returns:
         Dicionário com resultados do experimento
     """
-    # Import lazy para evitar inicialização de CUDA no processo principal
-    from experiment.xla_launcher import launch_experiment
+    # Imports lazy evitam inicialização de CUDA no processo principal.
+    from experiment.helpers import load_config
+    from experiment.persistence import write_workflow_run
+    from experiment.task_executor import SequentialWorkflowExecutor
+    from experiment.task_telemetry import TaskTelemetryCollector
+    from experiment.workflow_templates import (
+        build_huggingface_task_functions,
+        build_huggingface_workflow,
+    )
 
     logger.info(f"[{experiment_idx}] Iniciando experimento com parâmetros: {params}")
+    workflow_config = _build_huggingface_workflow_config(
+        experiment_idx,
+        params,
+        train_dataset=train_dataset,
+        dataset_overrides=dataset_overrides,
+        environment_details=environment_details,
+        tpu_cores=tpu_cores,
+    )
 
     try:
-        # Executa experimento nas GPUs designadas
-        result_data = launch_experiment(
-            config_path=config_path,
-            gpu_list=gpu_list,
-            parallel_workers=parallel_workers,
-            dataset_overrides=dataset_overrides,
-            environment_overrides=environment_overrides,
-            environment_cost_per_hour_usd=cloud_cost_per_hour_usd,
-            tpu_cores=tpu_cores,
+        definition = build_huggingface_workflow(workflow_config)
+        monitoring = load_config(config_path).getboolean(
+            "monitoring", "enable_monitoring", fallback=False,
         )
-
-        if result_data is None:
-            raise RuntimeError(
-                "A execução não retornou resultado. Grid search com TPU multicore "
-                "ainda não suporta a coleta determinística de resultados."
-            )
-
-        # Adiciona parâmetros ao resultado
-        result_data["grid_params"] = params
-        result_data["grid_experiment_idx"] = experiment_idx
+        workflow_run = SequentialWorkflowExecutor(
+            build_huggingface_task_functions(
+                workflow_config,
+                config_path=config_path,
+                gpu_list=gpu_list,
+                parallel_workers=parallel_workers,
+                train_file=train_dataset,
+                environment_overrides=environment_overrides,
+                environment_cost_per_hour_usd=cloud_cost_per_hour_usd,
+                tpu_cores=tpu_cores,
+            ),
+            telemetry=TaskTelemetryCollector(
+                enable_emissions=monitoring,
+                environment_cost_per_hour_usd=cloud_cost_per_hour_usd,
+            ),
+        ).execute(definition)
+        workflow_run_dir = write_workflow_run(workflow_run)
+        result_data = _project_workflow_result(
+            workflow_run,
+            definition,
+            workflow_run_dir=workflow_run_dir,
+            experiment_idx=experiment_idx,
+            params=params,
+        )
         result_data["parallel_workers"] = parallel_workers
         if "environment" in params:
             result_data["selected_environment"] = params["environment"]
-        result_data["status"] = "success"
+        if workflow_run.status != "success":
+            raise RuntimeError("Workflow T0-T2-T5 falhou.")
 
         logger.info(f"[{experiment_idx}] Experimento concluído com sucesso")
         return result_data
@@ -159,7 +304,8 @@ def run_single_experiment(
             "grid_params": params,
             "status": "failed",
             "error": str(e),
-            "traceback": traceback.format_exc()
+            "traceback": traceback.format_exc(),
+            "workflow": asdict(build_huggingface_workflow(workflow_config)),
         }
 
 
@@ -229,6 +375,22 @@ def run_grid_search(
             all_results = state.get("results", [])
         logger.info(f"Encontrados {len(completed_experiments)} experimentos já concluídos")
 
+    # Estágio 0 — coleta de recursos computacionais (BL-MILP): detecção local
+    # de hardware + catálogo estático de provedores de nuvem, persistidos
+    # antes de qualquer experimento ser executado. Alimenta gridsearch.
+    # milp_instance como um arquivo já pronto para leitura (sem heurística
+    # embutida no leitor da instância MILP).
+    env_details = grid_config.get("environments", {}).get("details")
+    if env_details:
+        from .resource_discovery import collect_and_persist_resource_catalog
+
+        resource_catalog_path = collect_and_persist_resource_catalog(
+            env_details, _resource_catalog_file(output_dir), results=all_results or None,
+        )
+        logger.info(
+            "Estágio de coleta de recursos concluído: %s", resource_catalog_path,
+        )
+
     # Gera grade de parâmetros (preserva índice original para compatibilidade
     # com retomada e rastreabilidade dos artefatos).
     param_grid = generate_parameter_grid(grid_config)
@@ -291,18 +453,36 @@ def run_grid_search(
                 logger.info("Execução cancelada pelo usuário")
                 sys.exit(0)
 
-    # Distribui GPUs entre workers em round-robin (um worker → uma GPU)
+    # Distribui GPUs entre workers em round-robin, respeitando a capacidade
+    # declarada por ambiente (parallel_workers em environments.details) — BL-W2.
     import torch as _torch
     _available_gpus: list[int] = (
         gpu_ids
         if gpu_ids is not None
         else list(range(_torch.cuda.device_count()))
     )
-    def _gpu_for(idx: int) -> list[int] | None:
-        """Retorna [gpu_id] para o worker `idx`, ou None quando não há GPUs."""
+    env_capacity_registry = _environment_capacity_registry(grid_config)
+    if env_capacity_registry:
+        logger.info(
+            "Capacidade de workers por ambiente carregada (BL-W2): %s",
+            env_capacity_registry,
+        )
+
+    def _gpu_for(idx: int, params: dict[str, Any] | None = None) -> list[int] | None:
+        """Retorna [gpu_id] para o worker `idx`, limitado à capacidade do ambiente selecionado.
+
+        Quando `params["environment"]` tem `parallel_workers` declarado em
+        `environments.details`, o round-robin passa a ciclar apenas sobre essa
+        capacidade (ex.: Colab T4 sempre usa o mesmo slot 0), em vez de ciclar
+        cegamente sobre todo o pool físico de GPUs disponivel.
+        """
         if not _available_gpus:
             return None
-        return [_available_gpus[idx % len(_available_gpus)]]
+        capacity = len(_available_gpus)
+        env_name = (params or {}).get("environment")
+        if env_name and env_name in env_capacity_registry:
+            capacity = max(1, min(capacity, env_capacity_registry[env_name]))
+        return [_available_gpus[idx % capacity]]
 
     def _cost_for_params(params: dict[str, Any]) -> float | None:
         """Retorna cost_per_hour_usd do ambiente selecionado, ou None.
@@ -316,6 +496,11 @@ def run_grid_search(
         if not env_name:
             return None
         return env_cost_registry.get(env_name)
+
+    def _details_for_params(params: dict[str, Any]) -> dict[str, Any] | None:
+        environment = params.get("environment")
+        details = (env_details or {}).get(environment)
+        return details if isinstance(details, dict) else None
 
     # Executa experimentos
     if parallel > 1:
@@ -331,11 +516,13 @@ def run_grid_search(
             futures = {
                 executor.submit(
                     run_single_experiment,
-                    idx, cfg, params, _gpu_for(idx), parallel,
+                    idx, cfg, params, _gpu_for(idx, params), parallel,
                     dataset_overrides,
                     _cost_for_params(params),
                     tpu_cores,
                     environment_overrides,
+                    _details_for_params(params),
+                    train_dataset,
                 ): idx
                 for idx, cfg, params in pending_experiments
             }
@@ -364,12 +551,14 @@ def run_grid_search(
         logger.info("Executando em modo sequencial | GPUs disponíveis: %s", _available_gpus or "CPU")
         for idx, config_path, params in pending_experiments:
             result = run_single_experiment(
-                idx, config_path, params, _gpu_for(idx),
+                idx, config_path, params, _gpu_for(idx, params),
                 parallel_workers=parallel,
                 dataset_overrides=dataset_overrides,
                 cloud_cost_per_hour_usd=_cost_for_params(params),
                 tpu_cores=tpu_cores,
                 environment_overrides=environment_overrides,
+                environment_details=_details_for_params(params),
+                train_dataset=train_dataset,
             )
             all_results.append(result)
             completed_experiments.add(idx)
@@ -407,7 +596,7 @@ def save_state(
         output_dir: Diretório de saída (Path). None = default do módulo.
     """
     state = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now().astimezone().isoformat(),
         "completed_experiments": list(completed_experiments),
         "results": results,
         "sla_prefilter": sla_prefilter_info or {

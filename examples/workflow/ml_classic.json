@@ -10,6 +10,7 @@
       "task_id": "prepare_data",
       "name": "Preparar dados tabulares",
       "task_type": "prepare",
+      "activity": "ingestion",
       "command": ["python", "scripts/prepare_tabular.py"],
       "config": {"dataset": "data/train.csv", "target": "label"},
       "input_signatures": {"dataset": "replace-with-dataset-hash"},
@@ -19,6 +20,7 @@
       "task_id": "train_model",
       "name": "Treinar classificador",
       "task_type": "train",
+      "activity": "adaptation",
       "depends_on": ["prepare_data"],
       "command": ["python", "scripts/train_sklearn.py"],
       "config": {"estimator": "RandomForestClassifier", "n_estimators": 200},
@@ -28,6 +30,7 @@
       "task_id": "evaluate_model",
       "name": "Avaliar classificador",
       "task_type": "evaluate",
+      "activity": "evaluation_monitoring",
       "depends_on": ["train_model"],
       "command": ["python", "scripts/evaluate_sklearn.py"],
       "artifacts": {"predictions": "output/tabular/predictions.csv"}
