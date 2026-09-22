@@ -1,8 +1,9 @@
-# PSLA4ML: k-Skyband para Workflows de ML
+# PSLA4ML: SLAs Personalizados via _K-Skyband_ para Workflows de ML
 
 ![Python](https://img.shields.io/badge/python-3.12-blue?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.9-EE4C2C?logo=pytorch&logoColor=white)
 ![Transformers](https://img.shields.io/badge/Transformers-5.2-FFD21E?logo=huggingface&logoColor=black)
+![CodeCarbon](https://img.shields.io/badge/CodeCarbon-3.2.2-2E8B57?logo=codecarbon&logoColor=green)
 ![Tests](https://img.shields.io/badge/tests-651%20passing-brightgreen?logo=pytest&logoColor=white)
 
 PSLA4ML mede execuções de aprendizado de máquina, explora configurações de recursos e hiperparâmetros e seleciona trade-offs por k-Skyband. Toda execução é um **workflow rastreável**, com tarefas, artefatos versionados, telemetria e manifesto persistido.
